@@ -21,6 +21,8 @@ dataset_name_list = ["NCI1"] # For testing.
 num_reps = 1
 hd = 64
 
+# TODO: Add the colour counts / histograms for each dataset based on layer, copied from the Garg paper.
+
 color_counts = [
     [3, 231, 10416, 15208, 16029, 16450, 16722, 16895, 17026]
 ]
@@ -121,7 +123,6 @@ for d, dataset_name in enumerate(dataset_name_list):
                 w2_norms = [0] # For the case with no layers, the weights would be 0.
                 
                 for conv in model.convs:
-                    print("In a conv")
                     # Assuming conv.lin and conv.root are the weight layers
                     # conv.lin is used for neighbors (W2), conv.root is used for the root/self node (W1)
                     W2 = conv.lin_rel.weight
@@ -227,6 +228,8 @@ for d, dataset_name in enumerate(dataset_name_list):
 
             # raw_data.append({'it': it, 'test': test_acc, 'train': train_acc, 'diff': train_acc - test_acc, 'layer': l,
             #                  'Color classes': color_counts[d][l]})
+
+            # TODO: Add the colour counts / histograms for each dataset based on layer, copied from the Garg paper.
             raw_data.append({'it': it, 'test': test_acc, 'train': train_acc, 'diff': train_acc - test_acc, 'layer': l,
                              'rad_complexity': rad_complexity})
 
