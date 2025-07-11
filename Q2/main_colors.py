@@ -12,20 +12,17 @@ from torch_geometric.nn import Linear, global_mean_pool, GraphConv
 from tqdm import tqdm
 
 batch_size = 128
-# num_layers = [0, 1, 2, 3, 4, 5, 6]
-num_layers = [0]
+num_layers = [0, 1, 2, 3, 4, 5, 6]
 lr = 0.001
-epochs = 5
+epochs = 500
 dataset_name_list = ["MCF-7", "MCF-7H", "MUTAGENICITY", "NCI1", "NCI109"] # "ENZYMES" is not a binary classification case, even though it was included in the Garg et al. 2020 paper.
-dataset_name_list = ["NCI1"] # For testing.
+dataset_name_list = {
+    # "MCF-7": [11533, 25417, 26872, 27048, 27059, 0, 0],
+    "NCI1": [2889, 3906, 4027, 4039, 4039, 4039, 4039],
+    # "MUTAGENICITY": [2819, 3624, 4239, 4317, 4317, 4317, 4317],
+}
 num_reps = 1
 hd = 64
-
-# TODO: Add the colour counts / histograms for each dataset based on layer, copied from the Garg paper.
-
-color_counts = [
-    [3, 231, 10416, 15208, 16029, 16450, 16722, 16895, 17026]
-]
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -51,11 +48,22 @@ class Net(torch.nn.Module):
 
         return global_mean_pool(x, batch)
 
+# Define transform: convert node labels to features if present
+class OneHotNodeLabel:
+    def __call__(self, data):
+        if hasattr(data, 'node_label'):
+            num_classes = int(data.node_label.max().item()) + 1
+            data.x = torch.nn.functional.one_hot(data.node_label, num_classes=num_classes).float()
+        elif data.x is None:
+            # Fallback: constant features
+            data.x = torch.ones((data.num_nodes, 1))
+        return data
 
-for d, dataset_name in enumerate(dataset_name_list):
+for d, dataset_name in enumerate(dataset_name_list.keys()):
     print("Loading dataset", dataset_name, end='... ')
     path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'TU')
-    dataset = TUDataset(path, name=dataset_name).shuffle()
+    transform = OneHotNodeLabel()
+    dataset = TUDataset(path, name=dataset_name, pre_transform=transform, force_reload=True).shuffle()
     print("done")
 
     colors = sns.color_palette()
@@ -200,6 +208,11 @@ for d, dataset_name in enumerate(dataset_name_list):
                 gamma = 1.0
                 
                 # Calculate the rademacher complexity upper bound
+                first_term = 4 / (gamma * m)
+
+                if B1 == B2 == 0:
+                    return first_term
+
                 C = C_rho * C_g * C_phi * B2
                 if C * d == 1:
                     M = C_phi * L
@@ -208,13 +221,11 @@ for d, dataset_name in enumerate(dataset_name_list):
 
                 R = C_rho * C_g * d * min(b * torch.sqrt(torch.tensor(r)).item(), B1 * B_x * M)
                 Z = C_phi * B1 * B_x + C_phi * B2 * R
-                Q = 24 * B_beta * torch.sqrt(torch.tensor(m)).item() * max(Z, M * torch.sqrt(torch.tensor(r)).item() * max(B_x * B1, R * B2))
+                Q = 24 * B_beta * torch.sqrt(torch.tensor(m)) * max(Z, M * torch.sqrt(torch.tensor(r)).item() * max(B_x * B1, R * B2))
 
-                first_term = 4 / (gamma * m)
-                second_term = (24 * r * B_beta * Z) / (gamma * torch.sqrt(torch.tensor(m))) * torch.sqrt(3 * torch.log(Q))
+                second_term = ((24 * r * B_beta * Z) / (gamma * torch.sqrt(torch.tensor(m)))) * torch.sqrt(3 * torch.log(Q))
                 rademacher_bound = first_term + second_term
-
-                return rademacher_bound
+                return rademacher_bound.item()
 
             for epoch in tqdm(range(1, epochs + 1)):
                 loss = train()
@@ -226,38 +237,40 @@ for d, dataset_name in enumerate(dataset_name_list):
                                                              hidden_dim=hd,
                                                              gnn_depth=l)
 
-            # raw_data.append({'it': it, 'test': test_acc, 'train': train_acc, 'diff': train_acc - test_acc, 'layer': l,
-            #                  'Color classes': color_counts[d][l]})
-
-            # TODO: Add the colour counts / histograms for each dataset based on layer, copied from the Garg paper.
+            num_histograms = dataset_name_list[dataset_name][l]
             raw_data.append({'it': it, 'test': test_acc, 'train': train_acc, 'diff': train_acc - test_acc, 'layer': l,
-                             'rad_complexity': rad_complexity})
+                             'rad_complexity': rad_complexity, 'num_histograms': num_histograms})
 
-            table_data[-1].append([train_acc, test_acc, train_acc - test_acc, rad_complexity])
+            # table_data[-1].append([train_acc, test_acc, train_acc - test_acc, rad_complexity, num_histograms])
 
 
 
     data = pd.DataFrame.from_records(raw_data)
-    table_data = np.array(table_data)
+    data.to_csv(dataset_name + '.csv')
+    print(f"Wrote output to {dataset_name}.csv")
 
-    with open(dataset_name + '.csv', 'w') as file:
-        writer = csv.writer(file, delimiter=' ', lineterminator='\n')
+    # table_data = np.array(table_data)
 
-        for i, h in enumerate(num_layers):
-            train = table_data[i][:, 0]
-            test = table_data[i][:, 1]
-            diff = table_data[i][:, 2]
-            rad_complexity = table_data[i][:, 3]
+    # with open(dataset_name + '.csv', 'w') as file:
+    #     writer = csv.writer(file, delimiter=' ', lineterminator='\n')
 
-            writer.writerow([str(h)])
-            writer.writerow(["###"])
-            writer.writerow([train.mean(), train.std()])
-            writer.writerow([test.mean(), test.std()])
-            writer.writerow([diff.mean(), diff.std()])
+    #     for i, h in enumerate(num_layers):
+    #         train = table_data[i][:, 0]
+    #         test = table_data[i][:, 1]
+    #         diff = table_data[i][:, 2]
+    #         rad_complexity = table_data[i][:, 3]
+    #         num_histograms = table_data[i][:, 4]
 
-            print(str(h))
-            print("###")
-            print(train.mean(), train.std())
-            print(test.mean(), test.std())
-            print(diff.mean(), diff.std())
-            print(rad_complexity[-1])
+    #         writer.writerow([str(h)])
+    #         writer.writerow(["###"])
+    #         writer.writerow([train.mean(), train.std()])
+    #         writer.writerow([test.mean(), test.std()])
+    #         writer.writerow([diff.mean(), diff.std()])
+
+    #         print(str(h))
+    #         print("###")
+    #         print(train.mean(), train.std())
+    #         print(test.mean(), test.std())
+    #         print(diff.mean(), diff.std())
+    #         print(rad_complexity[-1])
+    #         print(num_histograms[-1])
