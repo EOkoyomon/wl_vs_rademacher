@@ -21,10 +21,13 @@ dataset_name_list = {
     "NCI1": [2889, 3906, 4027, 4039, 4039, 4039, 4039],
     # "MUTAGENICITY": [2819, 3624, 4239, 4317, 4317, 4317, 4317],
 }
-num_reps = 1
+num_reps = 2
 hd = 64
 
+torch.manual_seed(12)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cpu')
+print("Using device", device)
 
 
 class Net(torch.nn.Module):
