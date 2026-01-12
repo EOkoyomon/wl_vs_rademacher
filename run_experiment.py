@@ -3,7 +3,6 @@ import os.path as osp
 
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import torch
 import torch.nn.functional as F
 from torch_geometric.datasets import TUDataset
@@ -15,7 +14,6 @@ batch_size = 128
 num_layers = [0, 1, 2, 3, 4, 5, 6]
 lr = 0.001
 epochs = 500
-dataset_name_list = ["MCF-7", "MCF-7H", "MUTAGENICITY", "NCI1", "NCI109"] # "ENZYMES" is not a binary classification case, even though it was included in the Garg et al. 2020 paper.
 dataset_name_list = {
     # "MCF-7": [11533, 25417, 26872, 27048, 27059, 0, 0],
     "NCI1": [2889, 3906, 4027, 4039, 4039, 4039, 4039],
@@ -68,8 +66,6 @@ for d, dataset_name in enumerate(dataset_name_list.keys()):
     transform = OneHotNodeLabel()
     dataset = TUDataset(path, name=dataset_name, pre_transform=transform, force_reload=True).shuffle()
     print("done")
-
-    colors = sns.color_palette()
 
     raw_data = []
     table_data = []
@@ -251,29 +247,3 @@ for d, dataset_name in enumerate(dataset_name_list.keys()):
     data = pd.DataFrame.from_records(raw_data)
     data.to_csv(dataset_name + '.csv')
     print(f"Wrote output to {dataset_name}.csv")
-
-    # table_data = np.array(table_data)
-
-    # with open(dataset_name + '.csv', 'w') as file:
-    #     writer = csv.writer(file, delimiter=' ', lineterminator='\n')
-
-    #     for i, h in enumerate(num_layers):
-    #         train = table_data[i][:, 0]
-    #         test = table_data[i][:, 1]
-    #         diff = table_data[i][:, 2]
-    #         rad_complexity = table_data[i][:, 3]
-    #         num_histograms = table_data[i][:, 4]
-
-    #         writer.writerow([str(h)])
-    #         writer.writerow(["###"])
-    #         writer.writerow([train.mean(), train.std()])
-    #         writer.writerow([test.mean(), test.std()])
-    #         writer.writerow([diff.mean(), diff.std()])
-
-    #         print(str(h))
-    #         print("###")
-    #         print(train.mean(), train.std())
-    #         print(test.mean(), test.std())
-    #         print(diff.mean(), diff.std())
-    #         print(rad_complexity[-1])
-    #         print(num_histograms[-1])
