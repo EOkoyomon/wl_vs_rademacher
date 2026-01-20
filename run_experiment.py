@@ -2,6 +2,7 @@ import csv
 import os.path as osp
 import random
 import wandb
+import argparse
 
 import numpy as np
 from torch.nn import BCEWithLogitsLoss
@@ -27,39 +28,42 @@ dataset_name_list = {
     "NCI1": [2889, 3906, 4027, 4039, 4039, 4039, 4039],
     # "MUTAGENICITY": [2819, 3624, 4239, 4317, 4317, 4317, 4317],
 }
-seeds = [1, 2, 3, 4, 5] 
+#seeds = [1, 2, 3, 4, 5] 
 num_reps = 5
 hd = 64
 early_stopping = 10
 
 sample_sizes = [50, 100]
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-#device = torch.device('cpu')
-print("Using device", device)
+
+def main(seed):
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    #device = torch.device('cpu')
+    print("Using device", device)
 
 
-for d, dataset_name in enumerate(dataset_name_list.keys()):
-    print("Loading dataset", dataset_name, end='... ')
-    path = osp.join(osp.dirname(osp.realpath(__file__)), 'data', 'TU')
-    transform = Compose([CalculateWLColors(num_layers)])
-    dataset = TUDataset(path, name=dataset_name, pre_transform=transform, force_reload=True).shuffle()
-    print("done")
 
-    raw_data = []
-    table_data = []
+    for d, dataset_name in enumerate(dataset_name_list.keys()):
+        print("Loading dataset", dataset_name, end='... ')
+        path = osp.join(osp.dirname(osp.realpath(__file__)), 'data', 'TU')
+        transform = Compose([CalculateWLColors(num_layers)])
+        dataset = TUDataset(path, name=dataset_name, pre_transform=transform, force_reload=True).shuffle()
+        print("done")
 
-    diffs = []
-    diffs_std = []
+        raw_data = []
+        table_data = []
 
-    for seed in seeds:
-        torch.manual_seed(seed)
-        random.seed(seed)
-        np.random.seed(seed)
+        diffs = []
+        diffs_std = []
+
         for l in num_layers:
             print("Number of layers:", l)
             table_data.append([])
             for m in sample_sizes + [len(dataset) - (len(dataset) // 10)]:
+                print("Number of samples:", m)
                 config = {
                     "delta_prob": delta_prob,
                     "m": m,
@@ -70,8 +74,7 @@ for d, dataset_name in enumerate(dataset_name_list.keys()):
                     "early_stopping": early_stopping,
                     "batch_size": batch_size
                 }
-                with wandb.init(name="GCN", project="wl_meet_rad", entity="ai-re", config=config, reinit=True) as run:
-                    print("Number of samples:", m)
+                with wandb.init(name="GCN", project="wl_meet_rad", entity="ai-re", config=config) as run:
                     start_train = len(dataset) // 10
                     dataset.shuffle()
                     p_dict = defaultdict(int)
@@ -171,9 +174,26 @@ for d, dataset_name in enumerate(dataset_name_list.keys()):
                             "test_loss": test_loss,
                             "gen_error_loss": train_loss - test_loss,
                             "gen_err_acc": train_acc - test_acc,
-                            "R_s_upper_bound": p_theory_upper_bound,
-                            "R_s_lower_bound": p_theory_lower_bound,
-                            "gen_error_upper_bound": gen_err_upper_bound,
-                            "gen_error_lower_bound": gen_err_lower_bound,
 
                         })
+
+                    run.log({
+                        "R_s_upper_bound": p_theory_upper_bound,
+                        "R_s_lower_bound": p_theory_lower_bound,
+                        "gen_error_upper_bound": gen_err_upper_bound,
+                        "gen_error_lower_bound": gen_err_lower_bound,
+                    })
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description="Argument parser for experiment configurations."
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed for RNG",
+    )
+    args = parser.parse_args()
+    main(args.seed)
