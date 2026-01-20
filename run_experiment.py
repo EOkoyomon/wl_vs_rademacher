@@ -1,69 +1,48 @@
 import csv
 import os.path as osp
+import random
+import wandb
 
 import numpy as np
+from torch.nn import BCEWithLogitsLoss
 import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch_geometric.datasets import TUDataset
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import Linear, global_mean_pool, GraphConv
+from torch_geometric.transforms import Compose
 from tqdm import tqdm
+from src.utils import OneHotNodeLabel, CalculateWLColors
+from src.net import Net, GCN
+from collections import defaultdict
 
 batch_size = 128
 num_layers = [0, 1, 2, 3, 4, 5, 6]
 lr = 0.001
 epochs = 500
+lipschits_constant_loss = 1.0
+delta_prob = 0.95
 dataset_name_list = {
     # "MCF-7": [11533, 25417, 26872, 27048, 27059, 0, 0],
     "NCI1": [2889, 3906, 4027, 4039, 4039, 4039, 4039],
     # "MUTAGENICITY": [2819, 3624, 4239, 4317, 4317, 4317, 4317],
 }
-num_reps = 2
+seeds = [1, 2, 3, 4, 5] 
+num_reps = 5
 hd = 64
+early_stopping = 10
 
-torch.manual_seed(12)
+sample_sizes = [50, 100]
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+#device = torch.device('cpu')
 print("Using device", device)
 
 
-class Net(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, nc):
-        super().__init__()
-
-        self.convs = torch.nn.ModuleList()
-        for _ in range(nc):
-            self.convs.append(GraphConv(in_channels, hidden_channels, aggr='add', bias=True))
-            in_channels = hidden_channels
-
-        if nc != 0:
-            self.readout = Linear(hidden_channels, out_channels)
-        else:
-            self.readout = Linear(in_channels, out_channels)
-
-    def forward(self, x, edge_index, batch):
-        for conv in self.convs:
-            x = torch.tanh(conv(x, edge_index))
-        x = torch.sigmoid(self.readout(x))
-
-        return global_mean_pool(x, batch)
-
-# Define transform: convert node labels to features if present
-class OneHotNodeLabel:
-    def __call__(self, data):
-        if hasattr(data, 'node_label'):
-            num_classes = int(data.node_label.max().item()) + 1
-            data.x = torch.nn.functional.one_hot(data.node_label, num_classes=num_classes).float()
-        elif data.x is None:
-            # Fallback: constant features
-            data.x = torch.ones((data.num_nodes, 1))
-        return data
-
 for d, dataset_name in enumerate(dataset_name_list.keys()):
     print("Loading dataset", dataset_name, end='... ')
-    path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'TU')
-    transform = OneHotNodeLabel()
+    path = osp.join(osp.dirname(osp.realpath(__file__)), 'data', 'TU')
+    transform = Compose([CalculateWLColors(num_layers)])
     dataset = TUDataset(path, name=dataset_name, pre_transform=transform, force_reload=True).shuffle()
     print("done")
 
@@ -73,177 +52,128 @@ for d, dataset_name in enumerate(dataset_name_list.keys()):
     diffs = []
     diffs_std = []
 
-    for l in num_layers:
-        print("Number of layers:", l)
-        table_data.append([])
-        for it in range(num_reps):
-            print("Repetition", it)
+    for seed in seeds:
+        torch.manual_seed(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+        for l in num_layers:
+            print("Number of layers:", l)
+            table_data.append([])
+            for m in sample_sizes + [len(dataset) - (len(dataset) // 10)]:
+                config = {
+                    "delta_prob": delta_prob,
+                    "m": m,
+                    "lr": lr,
+                    "num_layers": num_layers,
+                    "epochs": epochs,
+                    "hidden_dimension": hd,
+                    "early_stopping": early_stopping,
+                    "batch_size": batch_size
+                }
+                with wandb.init(name="GCN", project="wl_meet_rad", entity="ai-re", config=config, reinit=True) as run:
+                    print("Number of samples:", m)
+                    start_train = len(dataset) // 10
+                    dataset.shuffle()
+                    p_dict = defaultdict(int)
 
-            dataset.shuffle()
+                    for g in dataset[start_train:start_train+m]:
+                        p_dict[g[f'wl_hash_{l}']] += 1
 
-            train_dataset = dataset[len(dataset) // 10:]
-            train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
+                    p_theory_upper_bound = 0.0
+                    p_theory_lower_bound = 0.0
 
-            test_dataset = dataset[:len(dataset) // 10]
-            test_loader = DataLoader(test_dataset, batch_size)
+                    for c_j in p_dict.keys():
+                        mu_j = p_dict[c_j]
+                        p_theory_upper_bound += np.sqrt(mu_j)
+                        p_theory_lower_bound += np.sqrt(mu_j / 2.0)
 
-            model = Net(dataset.num_features, hd, 1, l).to(device) # Binary
-
-            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-            def population_risk(pred, labels):
-                # probs: tensor of shape [batch_size], values in [0, 1]
-                # labels: tensor of shape [batch_size], values 0 or 1
-                return (labels * (2 * pred - 1) + (1 - labels) * (1 - 2 * pred)).mean()
-
-            def train():
-                model.train()
-
-                total_loss = 0
-                for data in train_loader:
-                    data = data.to(device)
-                    optimizer.zero_grad()
-                    out = model(data.x, data.edge_index, data.batch).squeeze(-1)
-                    labels = data.y.view(-1).float() # Convert data.y to float from int
-                    loss = population_risk(out, labels)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += float(loss) * data.num_graphs
-                return total_loss / len(train_loader.dataset)
+                    gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound * (1.0/m) + 3.0 * np.sqrt(np.log(2.0/delta_prob)/2.0*m)
+                    gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound * (1.0/m) + 3.0 * np.sqrt(np.log(2.0/delta_prob)/2.0*m)
 
 
-            @torch.no_grad()
-            def test(loader):
-                model.eval()
 
-                total_correct = 0
-                for data in loader:
-                    data = data.to(device)
-                    out = model(data.x, data.edge_index, data.batch).squeeze(-1)
-                    probs = torch.sigmoid(out) # convert to [0, 1] again just to separate for test
-                    pred = (probs > 0.5).long() # threshold at 0.5
-                    total_correct += int((pred == data.y).sum())
-                return total_correct / len(loader.dataset)
-            
-            def max_l2_norms_conv_weights(model):
-                w1_norms = [0] # For the case with no layers, the weights would be 0.
-                w2_norms = [0] # For the case with no layers, the weights would be 0.
-                
-                for conv in model.convs:
-                    # Assuming conv.lin and conv.root are the weight layers
-                    # conv.lin is used for neighbors (W2), conv.root is used for the root/self node (W1)
-                    W2 = conv.lin_rel.weight
-                    W1 = conv.lin_root.weight
+                    train_dataset = dataset[start_train:start_train+m]
+                    train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
+
+                    test_dataset = dataset[:len(dataset) // 10]
+                    test_loader = DataLoader(test_dataset, batch_size)
+
+                    # model = Net(dataset.num_features, hd, 1, l).to(device) # Binary
+                    model = GCN(dataset.num_features, hd, 1, l).to(device) # Binary
+                    print("Model params:", sum(p.numel() for p in model.parameters() if p.requires_grad))
+
+                    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+                    def train():
+                        loss_fn = torch.nn.BCEWithLogitsLoss()
+                        model.train()
+
+                        total_loss = 0
+                        for data in train_loader:
+                            data = data.to(device)
+                            optimizer.zero_grad()
+                            out = model(data.x, data.edge_index, data.batch)
+                            # print(out)
+                            labels = data.y.to(torch.float32).view(out.shape) # Convert data.y to float from int
+                            loss = loss_fn(out, labels) #population_risk(out, labels)
+                            loss.backward()
+                            optimizer.step()
+                            total_loss += float(loss) * data.num_graphs
+                        return total_loss / len(train_loader.dataset)
+
+
+                    @torch.no_grad()
+                    def test(loader):
+                        model.eval()
+                        loss_fn = torch.nn.BCEWithLogitsLoss()
+
+                        total_correct = 0
+                        total_loss = 0
+                        for data in loader:
+                            data = data.to(device)
+                            pred = model(data.x, data.edge_index, data.batch)
+                            labels = data.y.to(torch.float32).view(pred.shape)
+                            loss = loss_fn(pred, labels)
+                            # pred = torch.argmax(pred, dim=1)
+                            pred = (pred.squeeze(-1) > 0.5).long()
+                            total_correct += int((pred == data.y).sum())
+                            total_loss += float(loss) * data.num_graphs
+                        return total_correct / len(loader.dataset), total_loss / len(loader.dataset)
                     
-                    w2_norm = torch.norm(W2, p=2)
-                    w1_norm = torch.norm(W1, p=2)
-                    
-                    w2_norms.append(w2_norm.item())
-                    w1_norms.append(w1_norm.item())
-                
-                return max(w1_norms), max(w2_norms)
-            
-            def max_l2_norm_inputs(dataset):
-                max_norm = 0.0
-                for data in dataset:
-                    # data.x is of shape [num_nodes_in_graph, r]
-                    norm = torch.norm(data.x, p=2)  # Frobenius norm
-                    if norm.item() > max_norm:
-                        max_norm = norm.item()
-                return max_norm
-            
-            def max_branching_factor(dataset):
-                max_degree = 0
-                for data in dataset:
-                    # data.edge_index is of shape [2, num_edges]
-                    row = data.edge_index[0]  # source nodes of edges
-                    deg = torch.bincount(row, minlength=data.num_nodes)  # degree of each node
-                    max_deg_in_graph = deg.max().item()
-                    if max_deg_in_graph > max_degree:
-                        max_degree = max_deg_in_graph
-                return max_degree
-            
-            @torch.no_grad()
-            def calculate_rademacher_complexity(model, dataset, hidden_dim, gnn_depth):
-                """
-                Calculates the upper bound of the rademacher complexity for the GNN model and dataset.
-                Based on Garg et al., 2020
-                """
-                # r is the dimension of the embedding
-                r = hidden_dim
+                    last_best_train = 1000
+                    epoch = 0
+                    last_update_train = 0
 
-                # d is the branching factor (i.e. max number of neighbours for any node)
-                d = max_branching_factor(dataset)
+                    while True:
+                        loss = train()
+                        train_acc, train_loss = test(train_loader)
+                        test_acc, test_loss = test(test_loader)
 
-                # m is the sample size
-                m = dataset.len()
+                        train_acc *= 100.0
+                        test_acc *= 100.0
 
-                # L is the depth of the GNN
-                L = gnn_depth
+                        is_early_stop = last_update_train == early_stopping
+                        if 100 - train_acc < 1e-2 or is_early_stop or epoch == epochs:
+                            print(f"Stopped at acc {train_acc} and ES {is_early_stop}")
+                            break
 
-                # C_rho is the Lipschitz constant of the transform (rho) of the locally-invariant neighbourhood aggregations. The paper does not indicate nonlinear but the survey paper says nonlinear.
-                C_rho = 1.0 # Can use ReLU, but using identity in the code by default
-                
-                # C_g is the Lipschitz constant of the nonlinear transform (g) applied to each neighbour before aggregation
-                C_g = 1.0 # Can use ReLU, but using identity in the code by default
-                
-                # C_phi is the Lipschitz constant of the non-linear transform (phi) applied at the end of the embedding update
-                C_phi = 1.0 # Tanh
+                        if loss < last_best_train:
+                            last_best_train = loss
+                            last_update_train = 0
 
-                # b is the L_infinity norm of phi.
-                b = 1.0 # Because Tanh
+                        epoch += 1
+                        last_update_train += 1
+                        run.log({
+                            "epoch": epoch,
+                            "train_acc": train_acc,
+                            "test_acc": test_acc,
+                            "train_loss": train_loss,
+                            "test_loss": test_loss,
+                            "gen_error_loss": train_loss - test_loss,
+                            "gen_err_acc": train_acc - test_acc,
+                            "R_s_upper_bound": p_theory_upper_bound,
+                            "R_s_lower_bound": p_theory_lower_bound,
+                            "gen_error_upper_bound": gen_err_upper_bound,
+                            "gen_error_lower_bound": gen_err_lower_bound,
 
-                # B1 is the upper bound of the L2 norm of the weight matrix that is applied to the main node embedding (x_v) before combination with its neighbours. The survey paper applies it to h_v rather than x_v and bounds this.
-                # B2 is the upper bound of the L2 norm of the weight matrix that is applied to the aggregated neighbours, after the rho transformation.
-                B1, B2 = max_l2_norms_conv_weights(model)
-
-                # B_x is the upper bound of the L2 norm of the feature vector x_v
-                B_x = max_l2_norm_inputs(dataset)
-
-                # B_beta is the upper bound of the L2 norm of weight matrix, Beta, of the readout function, used to apply a binary classifier by converting from feature dim to 1 dim.
-                B_beta = torch.norm(model.readout.weight, p=2)
-
-                # The margin for the margin loss.
-                gamma = 1.0
-                
-                # Calculate the rademacher complexity upper bound
-                first_term = 4 / (gamma * m)
-
-                if B1 == B2 == 0:
-                    return first_term
-
-                C = C_rho * C_g * C_phi * B2
-                if C * d == 1:
-                    M = C_phi * L
-                else:
-                    M = C_phi * ((C * d) ** L - 1) / (C * d - 1)
-
-                R = C_rho * C_g * d * min(b * torch.sqrt(torch.tensor(r)).item(), B1 * B_x * M)
-                Z = C_phi * B1 * B_x + C_phi * B2 * R
-                Q = 24 * B_beta * torch.sqrt(torch.tensor(m)) * max(Z, M * torch.sqrt(torch.tensor(r)).item() * max(B_x * B1, R * B2))
-
-                second_term = ((24 * r * B_beta * Z) / (gamma * torch.sqrt(torch.tensor(m)))) * torch.sqrt(3 * torch.log(Q))
-                rademacher_bound = first_term + second_term
-                return rademacher_bound.item()
-
-            for epoch in tqdm(range(1, epochs + 1)):
-                loss = train()
-                train_acc = test(train_loader) * 100.0
-                test_acc = test(test_loader) * 100.0
-
-            rad_complexity = calculate_rademacher_complexity(model=model,
-                                                             dataset=train_dataset,
-                                                             hidden_dim=hd,
-                                                             gnn_depth=l)
-
-            num_histograms = dataset_name_list[dataset_name][l]
-            raw_data.append({'it': it, 'test': test_acc, 'train': train_acc, 'diff': train_acc - test_acc, 'layer': l,
-                             'rad_complexity': rad_complexity, 'num_histograms': num_histograms})
-
-            # table_data[-1].append([train_acc, test_acc, train_acc - test_acc, rad_complexity, num_histograms])
-
-
-
-    data = pd.DataFrame.from_records(raw_data)
-    data.to_csv(dataset_name + '.csv')
-    print(f"Wrote output to {dataset_name}.csv")
+                        })
