@@ -33,7 +33,7 @@ num_reps = 5
 hd = 64
 early_stopping = 10
 
-sample_sizes = [50, 100]
+sample_sizes = [50, 100, 200, 500, 1000, 2000, 5000]
 
 
 def main(seed):
@@ -59,10 +59,14 @@ def main(seed):
         diffs = []
         diffs_std = []
 
+        train_dataset_sub_size = len(dataset) - len(dataset) // 10
+
         for l in num_layers:
             print("Number of layers:", l)
-            table_data.append([])
-            for m in sample_sizes + [len(dataset) - (len(dataset) // 10)]:
+            choices_of_m = [s for s in sample_sizes if s <= train_dataset_sub_size]
+            if max(choices_of_m) < train_dataset_sub_size:
+                choices_of_m.append(train_dataset_sub_size)
+            for m in choices_of_m:
                 print("Number of samples:", m)
                 config = {
                     "delta_prob": delta_prob,
@@ -74,7 +78,7 @@ def main(seed):
                     "early_stopping": early_stopping,
                     "batch_size": batch_size
                 }
-                with wandb.init(name="GCN", project="wl_meet_rad", entity="ai-re", config=config) as run:
+                with wandb.init(name="GCN", project="wl_meet_rad", entity="wl_meet_rad", config=config) as run:
                     start_train = len(dataset) // 10
                     dataset.shuffle()
                     p_dict = defaultdict(int)
