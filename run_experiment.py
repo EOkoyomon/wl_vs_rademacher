@@ -68,7 +68,7 @@ def main(seed):
                     "delta_prob": delta_prob,
                     "m": m,
                     "lr": lr,
-                    "num_layers": num_layers,
+                    "num_layers": l,
                     "epochs": epochs,
                     "hidden_dimension": hd,
                     "early_stopping": early_stopping,
