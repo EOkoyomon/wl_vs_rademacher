@@ -80,11 +80,11 @@ class GCN(torch.nn.Module):
         self.encoder = MLP(in_channels=in_channels, hidden_channels=hidden_channels, out_channels=hidden_channels, num_layers=2)
 
         self.layers = torch.nn.ModuleList([
-            GCNLayer(in_channels, hidden_channels, batch_norm=True, residual=True)
-            for _ in range(n_layers-1)
+            GCNLayer(hidden_channels, hidden_channels, batch_norm=True, residual=True)
+            for _ in range(n_layers)
             ]
         )
-        self.readout = MLPReadout(hidden_channels, 1)
+        self.readout = MLPReadout(hidden_channels, out_channels)
 
     def forward(self, x, edge_index, batch):
         h = self.encoder(x)
