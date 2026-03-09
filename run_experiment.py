@@ -79,11 +79,10 @@ def main(seed):
                     "batch_size": batch_size
                 }
                 with wandb.init(name="GCN", project="wl_meet_rad", entity="wl_meet_rad", config=config) as run:
-                    start_train = len(dataset) // 10
                     dataset.shuffle()
                     p_dict = defaultdict(int)
 
-                    for g in dataset[start_train:start_train+m]:
+                    for g in dataset[0:m]:
                         p_dict[g[f'wl_hash_{l}']] += 1
 
                     p_theory_upper_bound = 0.0
@@ -99,7 +98,7 @@ def main(seed):
 
 
 
-                    train_dataset = dataset[start_train:start_train+m]
+                    train_dataset = dataset[0:m]
                     train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
 
                     test_dataset = dataset[:len(dataset) // 10]
