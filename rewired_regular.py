@@ -31,7 +31,7 @@ class RewiredRegularGraphsDataset(InMemoryDataset):
     def processed_file_names(self):
 
         return [f'rewired_samples_{self.num_graphs}_Nodes_{self.nodes}_Deg_{self.degree}_maxK_{self.max_rewires}.pt']
-    def perturb_graph(G_original, num_rewires):
+    def perturb_graph(self, G_original, num_rewires):
         """
         Given an original graph G_original, perform num_rewires random edge rewires.
         Each rewire consists of removing one edge and adding a new edge between
@@ -101,17 +101,5 @@ class RewiredRegularGraphsDataset(InMemoryDataset):
         print("Dataset saved successfully!")
 
 
-G_original = nx.random_regular_graph(3, 30, seed=42) #deg=3, N=30
-
-fig, axes = plt.subplots(1, 1, figsize=(20, 5))
-pos = nx.circular_layout(G_original)
-
-nx.draw(G_original, pos, 
-        with_labels=False, 
-        node_size=100, 
-        node_color='skyblue', 
-        edge_color='gray', 
-        width=1.5)
-
-plt.tight_layout()
-plt.show()   
+if __name__ == "__main__":
+    dataset = RewiredRegularGraphsDataset(root='./data')
