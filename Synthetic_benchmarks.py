@@ -88,7 +88,7 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
                 G.remove_node(n)
                 
             else:
-                raise ValueError(f"Perturbazione sconosciuta: {self.perturbation_type}")
+                raise ValueError(f"Unknown perturbation: {self.perturbation_type}")
 
         return G
 
@@ -151,4 +151,7 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
 
 if __name__ == "__main__":
     for k in [0, 1, 2, 3, 4, 5]:
-        dataset = RandomLabelMemorizationDataset(root='./data', num_graphs=10, nodes=30, degree=3, regime='all', K=k, perturbation_type='edge_rewire', wl_iter=3, seed=42)
+        dataset = RandomLabelMemorizationDataset(root='./data', regime='all', K=k)
+
+    for r in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]:
+        dataset = RandomLabelMemorizationDataset(root='./data', regime='fraction', K=3, rho=r)
