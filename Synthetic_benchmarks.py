@@ -5,7 +5,7 @@ import torch
 from torch_geometric.utils import from_networkx
 import os
 from torch_geometric.data import InMemoryDataset
-
+import csv
 
 class RandomLabelMemorizationDataset(InMemoryDataset):
     def __init__(self, root, num_graphs=10, nodes=30, degree=3, 
@@ -144,6 +144,27 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
         print(f"-> WL Equivalence Classes (p): {unique_classes} / {self.num_graphs}")
        
         print("-" * 60)
+
+        csv_file = os.path.join(self.root, "wl_statistics.csv")
+        file_exists = os.path.isfile(csv_file)
+        
+        with open(csv_file, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            
+            if not file_exists:
+                writer.writerow(["Num_Graphs", "Nodes", "Degree","Regime", "K", "Rho", "Perturbation_Type", "WL_Classes",])
+            
+            
+            writer.writerow([
+                self.num_graphs,
+                self.nodes, 
+                self.degree,
+                self.regime, 
+                self.K, 
+                self.rho, 
+                self.perturbation_type, 
+                unique_classes
+            ])
         print("Saving dataset...")
         self.save(data_list, self.processed_paths[0])
         print("Dataset saved successfully!")
@@ -153,5 +174,5 @@ if __name__ == "__main__":
     for k in [0, 1, 2, 3, 4, 5]:
         dataset = RandomLabelMemorizationDataset(root='./data', regime='all', K=k)
 
-    for r in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]:
+    for r in [0.2, 0.4, 0.6, 0.8, 1.0]:
         dataset = RandomLabelMemorizationDataset(root='./data', regime='fraction', K=3, rho=r)
