@@ -150,4 +150,5 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
 
 
 if __name__ == "__main__":
-    dataset = RandomLabelMemorizationDataset(root='./data', num_graphs=1000, nodes=30, degree=3, regime='all', K=5, perturbation_type='edge_rewire', wl_iter=3, seed=42)
+    for k in [0, 1, 2, 3, 4, 5]:
+        dataset = RandomLabelMemorizationDataset(root='./data', num_graphs=10, nodes=30, degree=3, regime='all', K=k, perturbation_type='edge_rewire', wl_iter=3, seed=42)
