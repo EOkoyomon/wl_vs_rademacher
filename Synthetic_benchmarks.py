@@ -16,7 +16,7 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
         self.nodes = nodes
         self.degree = degree
         self.regime = regime # 'all' or 'fraction'
-        self.K = K # Number of rewires
+        self.K = K # Number of local graph perturbations
         self.rho = rho # Fraction of samples to perturb
         self.perturbation_type = perturbation_type
         self.wl_iter = wl_iter
