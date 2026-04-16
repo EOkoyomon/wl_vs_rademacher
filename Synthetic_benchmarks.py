@@ -172,7 +172,7 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
 
 if __name__ == "__main__":
     for k in [0, 1, 2, 3, 4, 5]:
-        dataset = RandomLabelMemorizationDataset(root='./data', regime='all', K=k)
+        dataset = RandomLabelMemorizationDataset(root='./data/memorization', regime='all', K=k)
 
     for r in [0.2, 0.4, 0.6, 0.8, 1.0]:
-        dataset = RandomLabelMemorizationDataset(root='./data', regime='fraction', K=3, rho=r)
+        dataset = RandomLabelMemorizationDataset(root='./data/memorization', regime='fraction', K=3, rho=r)
