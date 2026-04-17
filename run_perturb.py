@@ -1,0 +1,230 @@
+import csv
+import os.path as osp
+import random
+import wandb
+import argparse
+
+import numpy as np
+from torch.nn import BCEWithLogitsLoss
+import pandas as pd
+import torch
+import torch.nn.functional as F
+from torch_geometric.loader import DataLoader
+from torch_geometric.transforms import Compose
+
+from tqdm import tqdm
+from src.utils import OneHotNodeLabel, CalculateWLColors
+from src.net import Net, GCN
+from collections import defaultdict
+import networkx as nx
+import os
+from Synthetic_benchmarks import ParentClassificationDataset, RandomLabelMemorizationDataset
+
+batch_size = 16
+num_layers = [1, 2, 3, 4, 5, 6]
+lr = 0.0001
+epochs = 500
+lipschits_constant_loss = 1.0
+delta_prob = 0.95
+#seeds = [1, 2, 3, 4, 5] 
+num_reps = 5
+hd = 16
+early_stopping = 20
+
+
+def init_dataset(dataset_name, transforms, path):
+    if dataset_name == 'memo_all_pert':
+        # ### MEMORIZATION TASK 
+        for k in [0, 1, 2, 3, 4, 5]:
+            dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=100, pre_transform=transforms, regime='all', K=k)
+    elif dataset_name == "memor_partial_pert":
+        for r in [0.1, 0.2, 0.4, 0.6, 0.8, 1.0]:
+            dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=100, pre_transform=transforms, regime='fraction', K=3, rho=r)
+
+    ### PARENT CLASSIFICATION TASK
+    elif 'parent' in dataset_name:
+        parent_A = nx.random_regular_graph(3, 30, seed=0)
+        parent_B = nx.random_regular_graph(3, 30, seed=1)
+        parent_types = "regular_vs_regular"
+
+        root = os.path.join(path, 'parent_classification', parent_types)
+
+        if dataset_name == "parent_class_all":
+            for k in [0, 1, 3, 5]:
+                dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=100, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
+        else:
+            for r in [0.1, 0.4, 0.8]:
+                dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=100, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=r)
+    else:
+        raise Exception("No valid dataset specified")
+
+    return dataset
+
+
+def main(args):
+    seed = args.seed
+    dataset_name = args.dataset
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    #device = torch.device('cpu')
+    print("Using device", device)
+
+
+    print("Loading dataset", dataset_name, end='... ')
+    root_path = osp.join(osp.dirname(osp.realpath(__file__)), "data" )
+
+    transform = Compose([CalculateWLColors(num_layers)])
+    dataset = init_dataset(dataset_name, transform, path=root_path).shuffle()
+
+
+    m = len(dataset) - (len(dataset) // 10)
+    print(m)
+    print(len(dataset))
+
+    for l in num_layers:
+        print("Number of layers:", l)
+        config = {
+            "delta_prob": delta_prob,
+            "lr": lr,
+            "num_layers": l,
+            "epochs": epochs,
+            "hidden_dimension": hd,
+            "early_stopping": early_stopping,
+            "batch_size": batch_size
+        }
+        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+            dataset.shuffle()
+            p_dict = defaultdict(int)
+
+            for g in dataset[0:m]:
+                p_dict[g[f'wl_hash']] += 1
+
+            p_theory_upper_bound = 0.0
+            p_theory_lower_bound = 0.0
+
+            for c_j in p_dict.keys():
+                mu_j = p_dict[c_j]
+                p_theory_upper_bound += np.sqrt(mu_j)
+                p_theory_lower_bound += np.sqrt(mu_j / 2.0)
+
+            gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound * (1.0/m) + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
+            gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound * (1.0/m) + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
+
+
+
+            train_dataset = dataset[0:m]
+            train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
+
+            test_dataset = dataset[m:]
+            test_loader = DataLoader(test_dataset, batch_size)
+
+            # model = Net(dataset.num_features, hd, 1, l).to(device) # Binary
+            model = GCN(dataset.num_features, hd, 1, l).to(device) # Binary
+            print("Model params:", sum(p.numel() for p in model.parameters() if p.requires_grad))
+
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+            def train():
+                loss_fn = torch.nn.BCEWithLogitsLoss()
+                model.train()
+
+                total_loss = 0
+                for data in train_loader:
+                    data = data.to(device)
+                    optimizer.zero_grad()
+                    out = model(data.x, data.edge_index, data.batch)
+                    # print(out)
+                    labels = data.y.to(torch.float32).view(out.shape) # Convert data.y to float from int
+                    labels = (labels+1) / 2
+                    loss = loss_fn(out, labels) #population_risk(out, labels)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += float(loss) * data.num_graphs
+                return total_loss / len(train_loader.dataset)
+
+
+            @torch.no_grad()
+            def test(loader):
+                model.eval()
+                loss_fn = torch.nn.BCEWithLogitsLoss()
+
+                with torch.no_grad():
+                    total_correct = 0
+                    total_loss = 0
+                    for data in loader:
+                        data = data.to(device)
+                        pred = model(data.x, data.edge_index, data.batch)
+                        labels = data.y.to(torch.float32).view(pred.shape)
+                        labels = (labels+1) / 2
+                        loss = loss_fn(pred, labels)
+                        # pred = torch.argmax(pred, dim=1)
+                        pred = (pred.squeeze(-1) > 0.0).long()
+                        target = ((data.y.squeeze(-1) + 1) / 2).long()  # converts -1/1 → 0/1
+                        total_correct += int((pred == target).sum())
+                        total_loss += float(loss) * data.num_graphs
+                return total_correct / len(loader.dataset), total_loss / len(loader.dataset)
+            
+            last_best_train = 1000
+            epoch = 0
+            last_update_train = 0
+
+            for epoch in tqdm(range(epochs)):
+                loss = train()
+                train_acc, train_loss = test(train_loader)
+                test_acc, test_loss = test(test_loader)
+
+                train_acc *= 100.0
+                test_acc *= 100.0
+
+                is_early_stop = last_update_train >= early_stopping
+                if 100 - train_acc < 1e-2 or is_early_stop or epoch == epochs:
+                    print(f"Stopped at acc {train_acc} and ES {is_early_stop}")
+                    break
+
+                if loss < last_best_train:
+                    last_best_train = loss
+                    last_update_train = 0
+
+                last_update_train += 1
+                run.log({
+                    "epoch": epoch,
+                    "train_acc": train_acc,
+                    "test_acc": test_acc,
+                    "train_loss": train_loss,
+                    "test_loss": test_loss,
+                    "gen_error_loss": train_loss - test_loss,
+                    "gen_err_acc": train_acc - test_acc,
+
+                })
+
+            run.log({
+                "R_s_upper_bound": p_theory_upper_bound,
+                "R_s_lower_bound": p_theory_lower_bound,
+                "gen_error_upper_bound": gen_err_upper_bound,
+                "gen_error_lower_bound": gen_err_lower_bound,
+            })
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description="Argument parser for experiment configurations."
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed for RNG",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        required=True,
+        help="Dataset",
+        choices = ["memo_all_pert", "memo_partial_pert", "parent_class_all", "parent_class_partial"]
+    )
+
+    args = parser.parse_args()
+    main(args)

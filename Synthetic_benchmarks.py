@@ -68,7 +68,7 @@ def perturb_graph(G_original, num_steps, perturbation_type):
 class RandomLabelMemorizationDataset(InMemoryDataset):
     def __init__(self, root, num_graphs=10, nodes=30, degree=3, 
                  regime='all', K=0, rho=1.0, perturbation_type='edge_rewire', 
-                 wl_iter=3, seed=42, transform=None):
+                 wl_iter=3, seed=42, transform=None, pre_transform=None):
 
         self.num_graphs = num_graphs
         self.nodes = nodes
@@ -80,7 +80,7 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
         self.wl_iter = wl_iter
         self.seed = seed
 
-        super().__init__(root, transform)
+        super().__init__(root, transform, pre_transform=pre_transform)
         self.load(self.processed_paths[0])
 
     @property
@@ -174,7 +174,7 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
 class ParentClassificationDataset(InMemoryDataset):
     def __init__(self, root, parent_A, parent_B, num_graphs_per_class=10,
                  regime='all', K=0, rho=1.0, perturbation_type='edge_rewire', 
-                 wl_iter=3, seed=42, transform=None):
+                 wl_iter=3, seed=42, transform=None, pre_transform=None):
         self.parent_A = parent_A
         self.parent_B = parent_B
         self.nodes = parent_A.number_of_nodes()
@@ -188,7 +188,7 @@ class ParentClassificationDataset(InMemoryDataset):
         self.seed = seed
         self.total_graphs = 2 * num_graphs_per_class
         
-        super().__init__(root, transform)
+        super().__init__(root, transform, pre_transform=pre_transform)
         self.load(self.processed_paths[0])
 
     @property
