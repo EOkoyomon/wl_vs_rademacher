@@ -313,7 +313,7 @@ if __name__ == "__main__":
 
     parent_A = nx.random_regular_graph(3, 30, seed=0)
     parent_B = nx.random_regular_graph(3, 30, seed=1)
-    parents_string = "regular_vs_regular"
+    parent_types = "regular_vs_regular"
 
 
     root = os.path.join('./data/parent_classification', parents_string)
