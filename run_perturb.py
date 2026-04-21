@@ -32,14 +32,13 @@ hd = 16
 early_stopping = 20
 
 
-def init_dataset(dataset_name, transforms, path):
+def init_dataset(dataset_name, transforms, path, k):
     if dataset_name == 'memo_all_pert':
         # ### MEMORIZATION TASK 
-        for k in [0, 1, 2, 3, 4, 5]:
-            dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=100, pre_transform=transforms, regime='all', K=k)
-    elif dataset_name == "memor_partial_pert":
-        for r in [0.1, 0.2, 0.4, 0.6, 0.8, 1.0]:
-            dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=100, pre_transform=transforms, regime='fraction', K=3, rho=r)
+        k = int(k)
+        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=100, pre_transform=transforms, regime='all', K=k)
+    elif dataset_name == "memo_partial_pert":
+        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=100, pre_transform=transforms, regime='fraction', K=3, rho=k)
 
     ### PARENT CLASSIFICATION TASK
     elif 'parent' in dataset_name:
@@ -50,11 +49,10 @@ def init_dataset(dataset_name, transforms, path):
         root = os.path.join(path, 'parent_classification', parent_types)
 
         if dataset_name == "parent_class_all":
-            for k in [0, 1, 3, 5]:
-                dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=100, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
+            k=int(k)
+            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=100, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
         else:
-            for r in [0.1, 0.4, 0.8]:
-                dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=100, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=r)
+            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=100, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
     else:
         raise Exception("No valid dataset specified")
 
@@ -76,7 +74,7 @@ def main(args):
     root_path = osp.join(osp.dirname(osp.realpath(__file__)), "data" )
 
     transform = Compose([CalculateWLColors(num_layers)])
-    dataset = init_dataset(dataset_name, transform, path=root_path).shuffle()
+    dataset = init_dataset(dataset_name, transform, path=root_path, k=args.k).shuffle()
 
 
     m = len(dataset) - (len(dataset) // 10)
@@ -92,7 +90,9 @@ def main(args):
             "epochs": epochs,
             "hidden_dimension": hd,
             "early_stopping": early_stopping,
-            "batch_size": batch_size
+            "batch_size": batch_size,
+            "dataset": dataset_name,
+            "k": args.k
         }
         with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
             dataset.shuffle()
@@ -224,6 +224,12 @@ if __name__ == '__main__':
         required=True,
         help="Dataset",
         choices = ["memo_all_pert", "memo_partial_pert", "parent_class_all", "parent_class_partial"]
+    )
+    parser.add_argument(
+        "--k",
+        type=float,
+        required=True,
+        help="Dataset",
     )
 
     args = parser.parse_args()
