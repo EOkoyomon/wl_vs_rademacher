@@ -41,7 +41,7 @@ class GCNLayer(torch.nn.Module):
         self.residual = residual
 
         self.batchnorm_h = torch.nn.BatchNorm1d(out_dim)
-        self.conv = GCNConv(in_dim, out_dim, add_self_loops=False, normalize=True)
+        self.conv = GCNConv(in_dim, out_dim, add_self_loops=True, normalize=True)
     def forward(self, x, edge_index):
         h_in = x
 
@@ -92,7 +92,7 @@ class GCN(torch.nn.Module):
         for layer in self.layers:
             h = layer(h, edge_index)
 
-        h = scatter(h, batch, reduce="sum")
+        h = global_add_pool(h, batch)
 
         h = self.readout(h)
 
