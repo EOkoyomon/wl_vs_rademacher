@@ -8,7 +8,64 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.4.4",
     "pandas>=3.0.2",
-    "torch==2.4.0",
-    "torch-geometric>=2.7.0",
     "wandb>=0.26.0",
+]
+[project.optional-dependencies]
+cpu = [
+    "torch==2.9.0+cpu",
+    "torch-geometric",
+    "pyg-lib==0.6.0+pt29cpu",
+    "torch-sparse==0.6.18+pt29cpu",
+    "torch-scatter==2.1.2+pt29cpu",
+]
+cu130 = [
+    "torch==2.9.0+cu130",
+    "torch-geometric",
+    "pyg-lib==0.6.0+pt29cu130",
+    "torch-sparse==0.6.18+pt29cu130",
+    "torch-scatter==2.1.2+pt29cu130",
+]
+
+[tool.uv]
+environments = ["platform_system == 'Linux'"]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cu130" },
+    ],
+]
+
+[[tool.uv.index]]
+name = "pytorch-all"
+url = "https://download.pytorch.org/whl/"
+explicit = true
+
+[[tool.uv.index]]
+name = "pyg-cuda" 
+url = "https://data.pyg.org/whl/torch-2.9.0+cu130.html"
+explicit = true
+format = "flat"
+
+[[tool.uv.index]]
+name = "pyg-cpu" 
+url = "https://data.pyg.org/whl/torch-2.9.0+cpu.html"
+explicit = true
+format = "flat"
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-all"},
+]
+pyg-lib = [
+    { index = "pyg-cpu", extra = "cpu", marker = "platform_system == 'Linux'"},
+    { index = "pyg-cuda", extra = "cu130", marker = "platform_system == 'Linux'"}
+]
+torch-sparse = [
+    { index = "pyg-cpu", extra = "cpu", marker = "platform_system == 'Linux'"},
+    { index = "pyg-cuda", extra = "cu130", marker = "platform_system == 'Linux'"}
+]
+
+torch-scatter = [
+    { index = "pyg-cpu", extra = "cpu", marker = "platform_system == 'Linux'"},
+    { index = "pyg-cuda", extra = "cu130", marker = "platform_system == 'Linux'"}
 ]
