@@ -36,9 +36,9 @@ def init_dataset(dataset_name, transforms, path, k):
     if dataset_name == 'memo_all_pert':
         # ### MEMORIZATION TASK 
         k = int(k)
-        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=100, pre_transform=transforms, regime='all', K=k)
+        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
     elif dataset_name == "memo_partial_pert":
-        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=100, pre_transform=transforms, regime='fraction', K=3, rho=k)
+        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=3, rho=k)
 
     ### PARENT CLASSIFICATION TASK
     elif 'parent' in dataset_name:
@@ -50,9 +50,9 @@ def init_dataset(dataset_name, transforms, path, k):
 
         if dataset_name == "parent_class_all":
             k=int(k)
-            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=100, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
+            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
         else:
-            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=100, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
+            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
     else:
         raise Exception("No valid dataset specified")
 
@@ -78,8 +78,6 @@ def main(args):
 
 
     m = len(dataset) - (len(dataset) // 10)
-    print(m)
-    print(len(dataset))
 
     for l in num_layers:
         print("Number of layers:", l)
@@ -92,7 +90,8 @@ def main(args):
             "early_stopping": early_stopping,
             "batch_size": batch_size,
             "dataset": dataset_name,
-            "k": args.k
+            "k": args.k,
+            "seed": args.seed
         }
         with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
             dataset.shuffle()
