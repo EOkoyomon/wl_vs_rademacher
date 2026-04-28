@@ -104,12 +104,12 @@ def main(args):
             p_theory_lower_bound = 0.0
 
             for c_j in p_dict.keys():
-                mu_j = p_dict[c_j]
-                p_theory_upper_bound += np.sqrt(mu_j)
-                p_theory_lower_bound += np.sqrt(mu_j / 2.0)
+                mu_j = p_dict[c_j]/m
+                p_theory_upper_bound += np.sqrt(mu_j/m)
+                p_theory_lower_bound += np.sqrt(mu_j /(2.0*m))
 
-            gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound * (1.0/m) + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
-            gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound * (1.0/m) + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
+            gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
+            gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
 
 
 
