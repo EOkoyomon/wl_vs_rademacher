@@ -1,0 +1,22 @@
+diff --git a/run_perturb.py b/run_perturb.py
+index b69bdd6..5983fc4 100644
+--- a/run_perturb.py
++++ b/run_perturb.py
+@@ -95,7 +95,7 @@ def main(args):
+             "seed": args.seed
+         }
+         run_name = f"GCN_{dataset_name}_k{args.k}_rho{args.rho}_L{l}"
+-        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config, mode="disabled") as run: #, mode="disabled"
++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
+             dataset.shuffle()
+             p_dict = defaultdict(int)
+ 
+diff --git a/wandb/latest-run b/wandb/latest-run
+index d3651ca..ef2bafb 120000
+--- a/wandb/latest-run
++++ b/wandb/latest-run
+@@ -1 +1 @@
+-run-20260428_170144-sx6wiq9p
+\ No newline at end of file
++run-20260428_174017-i3veljnv
+\ No newline at end of file

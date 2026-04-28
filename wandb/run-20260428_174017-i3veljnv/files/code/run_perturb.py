@@ -74,7 +74,7 @@ def main(args):
     root_path = osp.join(osp.dirname(osp.realpath(__file__)), "data" )
 
     transform = Compose([CalculateWLColors(num_layers)])
-    dataset = init_dataset(dataset_name, transform, path=root_path, k=args.k, rho=args.rho).shuffle()
+    dataset = init_dataset(dataset_name, transform, path=root_path, k=args.k).shuffle()
 
 
     m = len(dataset) - (len(dataset) // 10)
@@ -203,8 +203,8 @@ def main(args):
             run.log({
                 "R_s_upper_bound": p_theory_upper_bound,
                 "R_s_lower_bound": p_theory_lower_bound,
-                "gen_error_upper_bound": gen_err_upper_bound
-                #"gen_error_lower_bound": gen_err_lower_bound,
+                "gen_error_upper_bound": gen_err_upper_bound,
+                "gen_error_lower_bound": gen_err_lower_bound,
             })
 
 

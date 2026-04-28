@@ -1,0 +1,3026 @@
+diff --git a/run_perturb.py b/run_perturb.py
+index 9959c4a..5983fc4 100644
+--- a/run_perturb.py
++++ b/run_perturb.py
+@@ -29,16 +29,16 @@ delta_prob = 0.95
+ #seeds = [1, 2, 3, 4, 5] 
+ num_reps = 5
+ hd = 16
+-early_stopping = 20
++early_stopping = 20 
+ 
+ 
+-def init_dataset(dataset_name, transforms, path, k):
++def init_dataset(dataset_name, transforms, path, k, rho=1.0):
++    k = int(k)
+     if dataset_name == 'memo_all_pert':
+         # ### MEMORIZATION TASK 
+-        k = int(k)
+         dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
+     elif dataset_name == "memo_partial_pert":
+-        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=3, rho=k)
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=k, rho=rho)
+ 
+     ### PARENT CLASSIFICATION TASK
+     elif 'parent' in dataset_name:
+@@ -52,7 +52,7 @@ def init_dataset(dataset_name, transforms, path, k):
+             k=int(k)
+             dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
+         else:
+-            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=k, rho=rho)
+     else:
+         raise Exception("No valid dataset specified")
+ 
+@@ -91,9 +91,11 @@ def main(args):
+             "batch_size": batch_size,
+             "dataset": dataset_name,
+             "k": args.k,
++            "rho": args.rho,
+             "seed": args.seed
+         }
+-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
++        run_name = f"GCN_{dataset_name}_k{args.k}_rho{args.rho}_L{l}"
++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
+             dataset.shuffle()
+             p_dict = defaultdict(int)
+ 
+@@ -226,10 +228,15 @@ if __name__ == '__main__':
+     )
+     parser.add_argument(
+         "--k",
+-        type=float,
++        type=int,
+         required=True,
+-        help="Dataset",
++        help="Number of nodes/edges perturbed per graph"
++    )
++    parser.add_argument(
++        "--rho",
++        type=float,
++        default=1.0,
++        help="Fraction of samples perturbed in the dataset"
+     )
+-
+     args = parser.parse_args()
+     main(args)
+diff --git a/wandb/latest-run b/wandb/latest-run
+new file mode 120000
+index 0000000..28ef4c5
+--- /dev/null
++++ b/wandb/latest-run
+@@ -0,0 +1 @@
++run-20260428_174158-cg6vbdum
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170008-k1ncivc9/files/code/run_perturb.py b/wandb/run-20260428_170008-k1ncivc9/files/code/run_perturb.py
+new file mode 100644
+index 0000000..0d7203b
+--- /dev/null
++++ b/wandb/run-20260428_170008-k1ncivc9/files/code/run_perturb.py
+@@ -0,0 +1,236 @@
++import csv
++import os.path as osp
++import random
++import wandb
++import argparse
++
++import numpy as np
++from torch.nn import BCEWithLogitsLoss
++import pandas as pd
++import torch
++import torch.nn.functional as F
++from torch_geometric.loader import DataLoader
++from torch_geometric.transforms import Compose
++
++from tqdm import tqdm
++from src.utils import OneHotNodeLabel, CalculateWLColors
++from src.net import Net, GCN
++from collections import defaultdict
++import networkx as nx
++import os
++from Synthetic_benchmarks import ParentClassificationDataset, RandomLabelMemorizationDataset
++
++batch_size = 16
++num_layers = [1, 2, 3, 4, 5, 6]
++lr = 0.0001
++epochs = 500
++lipschits_constant_loss = 1.0
++delta_prob = 0.95
++#seeds = [1, 2, 3, 4, 5] 
++num_reps = 5
++hd = 16
++early_stopping = 20
++
++
++def init_dataset(dataset_name, transforms, path, k):
++    if dataset_name == 'memo_all_pert':
++        # ### MEMORIZATION TASK 
++        k = int(k)
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
++    elif dataset_name == "memo_partial_pert":
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=3, rho=k)
++
++    ### PARENT CLASSIFICATION TASK
++    elif 'parent' in dataset_name:
++        parent_A = nx.random_regular_graph(3, 30, seed=0)
++        parent_B = nx.random_regular_graph(3, 30, seed=1)
++        parent_types = "regular_vs_regular"
++
++        root = os.path.join(path, 'parent_classification', parent_types)
++
++        if dataset_name == "parent_class_all":
++            k=int(k)
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
++        else:
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
++    else:
++        raise Exception("No valid dataset specified")
++
++    return dataset
++
++
++def main(args):
++    seed = args.seed
++    dataset_name = args.dataset
++    torch.manual_seed(seed)
++    random.seed(seed)
++    np.random.seed(seed)
++    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++    #device = torch.device('cpu')
++    print("Using device", device)
++
++
++    print("Loading dataset", dataset_name, end='... ')
++    root_path = osp.join(osp.dirname(osp.realpath(__file__)), "data" )
++
++    transform = Compose([CalculateWLColors(num_layers)])
++    dataset = init_dataset(dataset_name, transform, path=root_path, k=args.k).shuffle()
++
++
++    m = len(dataset) - (len(dataset) // 10)
++
++    for l in num_layers:
++        print("Number of layers:", l)
++        config = {
++            "delta_prob": delta_prob,
++            "lr": lr,
++            "num_layers": l,
++            "epochs": epochs,
++            "hidden_dimension": hd,
++            "early_stopping": early_stopping,
++            "batch_size": batch_size,
++            "dataset": dataset_name,
++            "k": args.k,
++            "seed": args.seed
++        }
++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++            dataset.shuffle()
++            p_dict = defaultdict(int)
++
++            for g in dataset[0:m]:
++                p_dict[g[f'wl_hash']] += 1
++
++            p_theory_upper_bound = 0.0
++            p_theory_lower_bound = 0.0
++
++            for c_j in p_dict.keys():
++                mu_j = p_dict[c_j]/m
++                p_theory_upper_bound += np.sqrt(mu_j/m)
++                p_theory_lower_bound += np.sqrt(mu_j /(2.0*m))
++
++            gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++            gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++
++
++
++            train_dataset = dataset[0:m]
++            train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
++
++            test_dataset = dataset[m:]
++            test_loader = DataLoader(test_dataset, batch_size)
++
++            # model = Net(dataset.num_features, hd, 1, l).to(device) # Binary
++            model = GCN(dataset.num_features, hd, 1, l).to(device) # Binary
++            print("Model params:", sum(p.numel() for p in model.parameters() if p.requires_grad))
++
++            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
++
++            def train():
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++                model.train()
++
++                total_loss = 0
++                for data in train_loader:
++                    data = data.to(device)
++                    optimizer.zero_grad()
++                    out = model(data.x, data.edge_index, data.batch)
++                    # print(out)
++                    labels = data.y.to(torch.float32).view(out.shape) # Convert data.y to float from int
++                    labels = (labels+1) / 2
++                    loss = loss_fn(out, labels) #population_risk(out, labels)
++                    loss.backward()
++                    optimizer.step()
++                    total_loss += float(loss) * data.num_graphs
++                return total_loss / len(train_loader.dataset)
++
++
++            @torch.no_grad()
++            def test(loader):
++                model.eval()
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++
++                with torch.no_grad():
++                    total_correct = 0
++                    total_loss = 0
++                    for data in loader:
++                        data = data.to(device)
++                        pred = model(data.x, data.edge_index, data.batch)
++                        labels = data.y.to(torch.float32).view(pred.shape)
++                        labels = (labels+1) / 2
++                        loss = loss_fn(pred, labels)
++                        # pred = torch.argmax(pred, dim=1)
++                        pred = (pred.squeeze(-1) > 0.0).long()
++                        target = ((data.y.squeeze(-1) + 1) / 2).long()  # converts -1/1 → 0/1
++                        total_correct += int((pred == target).sum())
++                        total_loss += float(loss) * data.num_graphs
++                return total_correct / len(loader.dataset), total_loss / len(loader.dataset)
++            
++            last_best_train = 1000
++            epoch = 0
++            last_update_train = 0
++
++            for epoch in tqdm(range(epochs)):
++                loss = train()
++                train_acc, train_loss = test(train_loader)
++                test_acc, test_loss = test(test_loader)
++
++                train_acc *= 100.0
++                test_acc *= 100.0
++
++                is_early_stop = last_update_train >= early_stopping
++                if 100 - train_acc < 1e-2 or is_early_stop or epoch == epochs:
++                    print(f"Stopped at acc {train_acc} and ES {is_early_stop}")
++                    break
++
++                if loss < last_best_train:
++                    last_best_train = loss
++                    last_update_train = 0
++
++                last_update_train += 1
++                run.log({
++                    "epoch": epoch,
++                    "train_acc": train_acc,
++                    "test_acc": test_acc,
++                    "train_loss": train_loss,
++                    "test_loss": test_loss,
++                    "gen_error_loss": train_loss - test_loss,
++                    "gen_err_acc": train_acc - test_acc,
++
++                })
++
++            run.log({
++                "R_s_upper_bound": p_theory_upper_bound,
++                "R_s_lower_bound": p_theory_lower_bound,
++                "gen_error_upper_bound": gen_err_upper_bound,
++                "gen_error_lower_bound": gen_err_lower_bound,
++            })
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(
++        description="Argument parser for experiment configurations."
++    )
++
++    parser.add_argument(
++        "--seed",
++        type=int,
++        default=0,
++        help="Seed for RNG",
++    )
++    parser.add_argument(
++        "--dataset",
++        type=str,
++        required=True,
++        help="Dataset",
++        choices = ["memo_all_pert", "memo_partial_pert", "parent_class_all", "parent_class_partial"]
++    )
++    parser.add_argument(
++        "--k",
++        type=float,
++        required=True,
++        help="Dataset",
++    )
++
++    args = parser.parse_args()
++    main(args)
+diff --git a/wandb/run-20260428_170008-k1ncivc9/files/config.yaml b/wandb/run-20260428_170008-k1ncivc9/files/config.yaml
+new file mode 100644
+index 0000000..0031c28
+--- /dev/null
++++ b/wandb/run-20260428_170008-k1ncivc9/files/config.yaml
+@@ -0,0 +1,78 @@
++_wandb:
++    value:
++        cli_version: 0.26.1
++        code_path: code/run_perturb.py
++        e:
++            zol71pdgqen7jjod545395jpdjhxgmwn:
++                apple:
++                    ecpuCores: 6
++                    gpuCores: 10
++                    macModel: Mac16,12
++                    memoryGb: 16
++                    name: Apple M4
++                    pcpuCores: 4
++                    ramTotalBytes: "17179869184"
++                args:
++                    - --dataset
++                    - memo_partial_pert
++                    - --k
++                    - "0.2"
++                codePath: run_perturb.py
++                codePathLocal: run_perturb.py
++                cpu_count: 10
++                cpu_count_logical: 10
++                disk:
++                    /:
++                        total: "494384795648"
++                        used: "151316922368"
++                email: caterina.graziani2@unisi.it
++                executable: /Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python
++                git:
++                    commit: 012a453129bdb5dd55c98e91a6367a91f82e344c
++                    remote: https://github.com/EOkoyomon/wl_vs_rademacher.git
++                host: MacBook-Air-di-Caterina.local
++                memory:
++                    total: "17179869184"
++                os: macOS-15.5-arm64-arm-64bit
++                program: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py
++                python: CPython 3.9.6
++                root: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher
++                startedAt: "2026-04-28T15:00:08.703473Z"
++                writerId: zol71pdgqen7jjod545395jpdjhxgmwn
++        m: []
++        python_version: 3.9.6
++        t:
++            "1":
++                - 1
++                - 77
++            "2":
++                - 1
++                - 77
++            "3":
++                - 2
++                - 13
++                - 16
++            "4": 3.9.6
++            "5": 0.26.1
++            "12": 0.26.1
++            "13": darwin-arm64
++batch_size:
++    value: 16
++dataset:
++    value: memo_partial_pert
++delta_prob:
++    value: 0.95
++early_stopping:
++    value: 20
++epochs:
++    value: 500
++hidden_dimension:
++    value: 16
++k:
++    value: 0.2
++lr:
++    value: 0.0001
++num_layers:
++    value: 1
++seed:
++    value: 0
+diff --git a/wandb/run-20260428_170008-k1ncivc9/files/diff.patch b/wandb/run-20260428_170008-k1ncivc9/files/diff.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170008-k1ncivc9/files/diff.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170008-k1ncivc9/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch b/wandb/run-20260428_170008-k1ncivc9/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170008-k1ncivc9/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170008-k1ncivc9/files/requirements.txt b/wandb/run-20260428_170008-k1ncivc9/files/requirements.txt
+new file mode 100644
+index 0000000..734859c
+--- /dev/null
++++ b/wandb/run-20260428_170008-k1ncivc9/files/requirements.txt
+@@ -0,0 +1,58 @@
++async-timeout==5.0.1
++requests==2.32.5
++psutil==7.2.1
++aiohttp==3.13.3
++tzdata==2026.2
++GitPython==3.1.48
++matplotlib==3.9.4
++certifi==2026.1.4
++sentry-sdk==2.58.0
++platformdirs==4.4.0
++propcache==0.4.1
++torch==2.8.0
++filelock==3.19.1
++pip==25.3
++multidict==6.7.0
++idna==3.11
++tqdm==4.67.1
++click==8.1.8
++numpy==2.0.2
++fsspec==2025.10.0
++pydantic_core==2.46.3
++charset-normalizer==3.4.4
++sympy==1.14.0
++kiwisolver==1.4.7
++eval_type_backport==0.3.1
++wandb==0.26.1
++torch-geometric==2.6.1
++contourpy==1.3.0
++pytz==2026.1.post1
++protobuf==6.33.6
++gitdb==4.0.12
++smmap==5.0.3
++python-dateutil==2.9.0.post0
++mpmath==1.3.0
++PyYAML==6.0.3
++fonttools==4.60.2
++urllib3==2.6.3
++frozenlist==1.8.0
++pydantic==2.13.3
++typing_extensions==4.15.0
++aiosignal==1.4.0
++packaging==25.0
++cycler==0.12.1
++Jinja2==3.1.6
++pyparsing==3.3.2
++pandas==2.3.3
++MarkupSafe==3.0.3
++aiohappyeyeballs==2.6.1
++attrs==25.4.0
++networkx==3.2.1
++pillow==11.3.0
++typing-inspection==0.4.2
++zipp==3.23.0
++annotated-types==0.7.0
++setuptools==58.0.4
++six==1.17.0
++yarl==1.22.0
++importlib_resources==6.5.2
+diff --git a/wandb/run-20260428_170008-k1ncivc9/files/wandb-metadata.json b/wandb/run-20260428_170008-k1ncivc9/files/wandb-metadata.json
+new file mode 100644
+index 0000000..d6bea56
+--- /dev/null
++++ b/wandb/run-20260428_170008-k1ncivc9/files/wandb-metadata.json
+@@ -0,0 +1,43 @@
++{
++  "os":  "macOS-15.5-arm64-arm-64bit",
++  "python":  "CPython 3.9.6",
++  "startedAt":  "2026-04-28T15:00:08.703473Z",
++  "args":  [
++    "--dataset",
++    "memo_partial_pert",
++    "--k",
++    "0.2"
++  ],
++  "program":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py",
++  "codePath":  "run_perturb.py",
++  "codePathLocal":  "run_perturb.py",
++  "git":  {
++    "remote":  "https://github.com/EOkoyomon/wl_vs_rademacher.git",
++    "commit":  "012a453129bdb5dd55c98e91a6367a91f82e344c"
++  },
++  "email":  "caterina.graziani2@unisi.it",
++  "root":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher",
++  "host":  "MacBook-Air-di-Caterina.local",
++  "executable":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python",
++  "cpu_count":  10,
++  "cpu_count_logical":  10,
++  "disk":  {
++    "/":  {
++      "total":  "494384795648",
++      "used":  "151316922368"
++    }
++  },
++  "memory":  {
++    "total":  "17179869184"
++  },
++  "apple":  {
++    "name":  "Apple M4",
++    "ecpuCores":  6,
++    "pcpuCores":  4,
++    "gpuCores":  10,
++    "memoryGb":  16,
++    "ramTotalBytes":  "17179869184",
++    "macModel":  "Mac16,12"
++  },
++  "writerId":  "zol71pdgqen7jjod545395jpdjhxgmwn"
++}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170008-k1ncivc9/files/wandb-summary.json b/wandb/run-20260428_170008-k1ncivc9/files/wandb-summary.json
+new file mode 100644
+index 0000000..05eebef
+--- /dev/null
++++ b/wandb/run-20260428_170008-k1ncivc9/files/wandb-summary.json
+@@ -0,0 +1 @@
++{"_runtime":39,"test_acc":41,"test_loss":0.7006448197364807,"_timestamp":1.777388451973836e+09,"gen_err_acc":10,"gen_error_lower_bound":0.3829320926261732,"gen_error_loss":-0.0074748624695671895,"R_s_upper_bound":0.22763339742787675,"gen_error_upper_bound":0.5162766495903575,"train_loss":0.6931699572669136,"train_acc":51,"_wandb":{"runtime":39},"_step":355,"R_s_lower_bound":0.16096111894578463,"epoch":354}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170008-k1ncivc9/run-k1ncivc9.wandb b/wandb/run-20260428_170008-k1ncivc9/run-k1ncivc9.wandb
+new file mode 100644
+index 0000000..f5b732a
+Binary files /dev/null and b/wandb/run-20260428_170008-k1ncivc9/run-k1ncivc9.wandb differ
+diff --git a/wandb/run-20260428_170053-v4lhu7zz/files/code/run_perturb.py b/wandb/run-20260428_170053-v4lhu7zz/files/code/run_perturb.py
+new file mode 100644
+index 0000000..0d7203b
+--- /dev/null
++++ b/wandb/run-20260428_170053-v4lhu7zz/files/code/run_perturb.py
+@@ -0,0 +1,236 @@
++import csv
++import os.path as osp
++import random
++import wandb
++import argparse
++
++import numpy as np
++from torch.nn import BCEWithLogitsLoss
++import pandas as pd
++import torch
++import torch.nn.functional as F
++from torch_geometric.loader import DataLoader
++from torch_geometric.transforms import Compose
++
++from tqdm import tqdm
++from src.utils import OneHotNodeLabel, CalculateWLColors
++from src.net import Net, GCN
++from collections import defaultdict
++import networkx as nx
++import os
++from Synthetic_benchmarks import ParentClassificationDataset, RandomLabelMemorizationDataset
++
++batch_size = 16
++num_layers = [1, 2, 3, 4, 5, 6]
++lr = 0.0001
++epochs = 500
++lipschits_constant_loss = 1.0
++delta_prob = 0.95
++#seeds = [1, 2, 3, 4, 5] 
++num_reps = 5
++hd = 16
++early_stopping = 20
++
++
++def init_dataset(dataset_name, transforms, path, k):
++    if dataset_name == 'memo_all_pert':
++        # ### MEMORIZATION TASK 
++        k = int(k)
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
++    elif dataset_name == "memo_partial_pert":
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=3, rho=k)
++
++    ### PARENT CLASSIFICATION TASK
++    elif 'parent' in dataset_name:
++        parent_A = nx.random_regular_graph(3, 30, seed=0)
++        parent_B = nx.random_regular_graph(3, 30, seed=1)
++        parent_types = "regular_vs_regular"
++
++        root = os.path.join(path, 'parent_classification', parent_types)
++
++        if dataset_name == "parent_class_all":
++            k=int(k)
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
++        else:
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
++    else:
++        raise Exception("No valid dataset specified")
++
++    return dataset
++
++
++def main(args):
++    seed = args.seed
++    dataset_name = args.dataset
++    torch.manual_seed(seed)
++    random.seed(seed)
++    np.random.seed(seed)
++    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++    #device = torch.device('cpu')
++    print("Using device", device)
++
++
++    print("Loading dataset", dataset_name, end='... ')
++    root_path = osp.join(osp.dirname(osp.realpath(__file__)), "data" )
++
++    transform = Compose([CalculateWLColors(num_layers)])
++    dataset = init_dataset(dataset_name, transform, path=root_path, k=args.k).shuffle()
++
++
++    m = len(dataset) - (len(dataset) // 10)
++
++    for l in num_layers:
++        print("Number of layers:", l)
++        config = {
++            "delta_prob": delta_prob,
++            "lr": lr,
++            "num_layers": l,
++            "epochs": epochs,
++            "hidden_dimension": hd,
++            "early_stopping": early_stopping,
++            "batch_size": batch_size,
++            "dataset": dataset_name,
++            "k": args.k,
++            "seed": args.seed
++        }
++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++            dataset.shuffle()
++            p_dict = defaultdict(int)
++
++            for g in dataset[0:m]:
++                p_dict[g[f'wl_hash']] += 1
++
++            p_theory_upper_bound = 0.0
++            p_theory_lower_bound = 0.0
++
++            for c_j in p_dict.keys():
++                mu_j = p_dict[c_j]/m
++                p_theory_upper_bound += np.sqrt(mu_j/m)
++                p_theory_lower_bound += np.sqrt(mu_j /(2.0*m))
++
++            gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++            gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++
++
++
++            train_dataset = dataset[0:m]
++            train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
++
++            test_dataset = dataset[m:]
++            test_loader = DataLoader(test_dataset, batch_size)
++
++            # model = Net(dataset.num_features, hd, 1, l).to(device) # Binary
++            model = GCN(dataset.num_features, hd, 1, l).to(device) # Binary
++            print("Model params:", sum(p.numel() for p in model.parameters() if p.requires_grad))
++
++            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
++
++            def train():
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++                model.train()
++
++                total_loss = 0
++                for data in train_loader:
++                    data = data.to(device)
++                    optimizer.zero_grad()
++                    out = model(data.x, data.edge_index, data.batch)
++                    # print(out)
++                    labels = data.y.to(torch.float32).view(out.shape) # Convert data.y to float from int
++                    labels = (labels+1) / 2
++                    loss = loss_fn(out, labels) #population_risk(out, labels)
++                    loss.backward()
++                    optimizer.step()
++                    total_loss += float(loss) * data.num_graphs
++                return total_loss / len(train_loader.dataset)
++
++
++            @torch.no_grad()
++            def test(loader):
++                model.eval()
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++
++                with torch.no_grad():
++                    total_correct = 0
++                    total_loss = 0
++                    for data in loader:
++                        data = data.to(device)
++                        pred = model(data.x, data.edge_index, data.batch)
++                        labels = data.y.to(torch.float32).view(pred.shape)
++                        labels = (labels+1) / 2
++                        loss = loss_fn(pred, labels)
++                        # pred = torch.argmax(pred, dim=1)
++                        pred = (pred.squeeze(-1) > 0.0).long()
++                        target = ((data.y.squeeze(-1) + 1) / 2).long()  # converts -1/1 → 0/1
++                        total_correct += int((pred == target).sum())
++                        total_loss += float(loss) * data.num_graphs
++                return total_correct / len(loader.dataset), total_loss / len(loader.dataset)
++            
++            last_best_train = 1000
++            epoch = 0
++            last_update_train = 0
++
++            for epoch in tqdm(range(epochs)):
++                loss = train()
++                train_acc, train_loss = test(train_loader)
++                test_acc, test_loss = test(test_loader)
++
++                train_acc *= 100.0
++                test_acc *= 100.0
++
++                is_early_stop = last_update_train >= early_stopping
++                if 100 - train_acc < 1e-2 or is_early_stop or epoch == epochs:
++                    print(f"Stopped at acc {train_acc} and ES {is_early_stop}")
++                    break
++
++                if loss < last_best_train:
++                    last_best_train = loss
++                    last_update_train = 0
++
++                last_update_train += 1
++                run.log({
++                    "epoch": epoch,
++                    "train_acc": train_acc,
++                    "test_acc": test_acc,
++                    "train_loss": train_loss,
++                    "test_loss": test_loss,
++                    "gen_error_loss": train_loss - test_loss,
++                    "gen_err_acc": train_acc - test_acc,
++
++                })
++
++            run.log({
++                "R_s_upper_bound": p_theory_upper_bound,
++                "R_s_lower_bound": p_theory_lower_bound,
++                "gen_error_upper_bound": gen_err_upper_bound,
++                "gen_error_lower_bound": gen_err_lower_bound,
++            })
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(
++        description="Argument parser for experiment configurations."
++    )
++
++    parser.add_argument(
++        "--seed",
++        type=int,
++        default=0,
++        help="Seed for RNG",
++    )
++    parser.add_argument(
++        "--dataset",
++        type=str,
++        required=True,
++        help="Dataset",
++        choices = ["memo_all_pert", "memo_partial_pert", "parent_class_all", "parent_class_partial"]
++    )
++    parser.add_argument(
++        "--k",
++        type=float,
++        required=True,
++        help="Dataset",
++    )
++
++    args = parser.parse_args()
++    main(args)
+diff --git a/wandb/run-20260428_170053-v4lhu7zz/files/config.yaml b/wandb/run-20260428_170053-v4lhu7zz/files/config.yaml
+new file mode 100644
+index 0000000..ad39ed0
+--- /dev/null
++++ b/wandb/run-20260428_170053-v4lhu7zz/files/config.yaml
+@@ -0,0 +1,78 @@
++_wandb:
++    value:
++        cli_version: 0.26.1
++        code_path: code/run_perturb.py
++        e:
++            ncoriil6jtkg9y2jkaadpn8gvclxuang:
++                apple:
++                    ecpuCores: 6
++                    gpuCores: 10
++                    macModel: Mac16,12
++                    memoryGb: 16
++                    name: Apple M4
++                    pcpuCores: 4
++                    ramTotalBytes: "17179869184"
++                args:
++                    - --dataset
++                    - memo_partial_pert
++                    - --k
++                    - "0.2"
++                codePath: run_perturb.py
++                codePathLocal: run_perturb.py
++                cpu_count: 10
++                cpu_count_logical: 10
++                disk:
++                    /:
++                        total: "494384795648"
++                        used: "151303061504"
++                email: caterina.graziani2@unisi.it
++                executable: /Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python
++                git:
++                    commit: 012a453129bdb5dd55c98e91a6367a91f82e344c
++                    remote: https://github.com/EOkoyomon/wl_vs_rademacher.git
++                host: MacBook-Air-di-Caterina.local
++                memory:
++                    total: "17179869184"
++                os: macOS-15.5-arm64-arm-64bit
++                program: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py
++                python: CPython 3.9.6
++                root: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher
++                startedAt: "2026-04-28T15:00:53.991127Z"
++                writerId: ncoriil6jtkg9y2jkaadpn8gvclxuang
++        m: []
++        python_version: 3.9.6
++        t:
++            "1":
++                - 1
++                - 77
++            "2":
++                - 1
++                - 77
++            "3":
++                - 2
++                - 13
++                - 16
++            "4": 3.9.6
++            "5": 0.26.1
++            "12": 0.26.1
++            "13": darwin-arm64
++batch_size:
++    value: 16
++dataset:
++    value: memo_partial_pert
++delta_prob:
++    value: 0.95
++early_stopping:
++    value: 20
++epochs:
++    value: 500
++hidden_dimension:
++    value: 16
++k:
++    value: 0.2
++lr:
++    value: 0.0001
++num_layers:
++    value: 2
++seed:
++    value: 0
+diff --git a/wandb/run-20260428_170053-v4lhu7zz/files/diff.patch b/wandb/run-20260428_170053-v4lhu7zz/files/diff.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170053-v4lhu7zz/files/diff.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170053-v4lhu7zz/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch b/wandb/run-20260428_170053-v4lhu7zz/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170053-v4lhu7zz/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170053-v4lhu7zz/files/requirements.txt b/wandb/run-20260428_170053-v4lhu7zz/files/requirements.txt
+new file mode 100644
+index 0000000..734859c
+--- /dev/null
++++ b/wandb/run-20260428_170053-v4lhu7zz/files/requirements.txt
+@@ -0,0 +1,58 @@
++async-timeout==5.0.1
++requests==2.32.5
++psutil==7.2.1
++aiohttp==3.13.3
++tzdata==2026.2
++GitPython==3.1.48
++matplotlib==3.9.4
++certifi==2026.1.4
++sentry-sdk==2.58.0
++platformdirs==4.4.0
++propcache==0.4.1
++torch==2.8.0
++filelock==3.19.1
++pip==25.3
++multidict==6.7.0
++idna==3.11
++tqdm==4.67.1
++click==8.1.8
++numpy==2.0.2
++fsspec==2025.10.0
++pydantic_core==2.46.3
++charset-normalizer==3.4.4
++sympy==1.14.0
++kiwisolver==1.4.7
++eval_type_backport==0.3.1
++wandb==0.26.1
++torch-geometric==2.6.1
++contourpy==1.3.0
++pytz==2026.1.post1
++protobuf==6.33.6
++gitdb==4.0.12
++smmap==5.0.3
++python-dateutil==2.9.0.post0
++mpmath==1.3.0
++PyYAML==6.0.3
++fonttools==4.60.2
++urllib3==2.6.3
++frozenlist==1.8.0
++pydantic==2.13.3
++typing_extensions==4.15.0
++aiosignal==1.4.0
++packaging==25.0
++cycler==0.12.1
++Jinja2==3.1.6
++pyparsing==3.3.2
++pandas==2.3.3
++MarkupSafe==3.0.3
++aiohappyeyeballs==2.6.1
++attrs==25.4.0
++networkx==3.2.1
++pillow==11.3.0
++typing-inspection==0.4.2
++zipp==3.23.0
++annotated-types==0.7.0
++setuptools==58.0.4
++six==1.17.0
++yarl==1.22.0
++importlib_resources==6.5.2
+diff --git a/wandb/run-20260428_170053-v4lhu7zz/files/wandb-metadata.json b/wandb/run-20260428_170053-v4lhu7zz/files/wandb-metadata.json
+new file mode 100644
+index 0000000..358b4a1
+--- /dev/null
++++ b/wandb/run-20260428_170053-v4lhu7zz/files/wandb-metadata.json
+@@ -0,0 +1,43 @@
++{
++  "os":  "macOS-15.5-arm64-arm-64bit",
++  "python":  "CPython 3.9.6",
++  "startedAt":  "2026-04-28T15:00:53.991127Z",
++  "args":  [
++    "--dataset",
++    "memo_partial_pert",
++    "--k",
++    "0.2"
++  ],
++  "program":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py",
++  "codePath":  "run_perturb.py",
++  "codePathLocal":  "run_perturb.py",
++  "git":  {
++    "remote":  "https://github.com/EOkoyomon/wl_vs_rademacher.git",
++    "commit":  "012a453129bdb5dd55c98e91a6367a91f82e344c"
++  },
++  "email":  "caterina.graziani2@unisi.it",
++  "root":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher",
++  "host":  "MacBook-Air-di-Caterina.local",
++  "executable":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python",
++  "cpu_count":  10,
++  "cpu_count_logical":  10,
++  "disk":  {
++    "/":  {
++      "total":  "494384795648",
++      "used":  "151303061504"
++    }
++  },
++  "memory":  {
++    "total":  "17179869184"
++  },
++  "apple":  {
++    "name":  "Apple M4",
++    "ecpuCores":  6,
++    "pcpuCores":  4,
++    "gpuCores":  10,
++    "memoryGb":  16,
++    "ramTotalBytes":  "17179869184",
++    "macModel":  "Mac16,12"
++  },
++  "writerId":  "ncoriil6jtkg9y2jkaadpn8gvclxuang"
++}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170053-v4lhu7zz/files/wandb-summary.json b/wandb/run-20260428_170053-v4lhu7zz/files/wandb-summary.json
+new file mode 100644
+index 0000000..2a37f99
+--- /dev/null
++++ b/wandb/run-20260428_170053-v4lhu7zz/files/wandb-summary.json
+@@ -0,0 +1 @@
++{"_step":53,"test_acc":41,"_timestamp":1.777388463271198e+09,"test_loss":15.695447425842286,"gen_err_acc":10,"R_s_lower_bound":0.16096111894578463,"gen_error_lower_bound":0.3829320926261732,"_wandb":{"runtime":7},"epoch":52,"gen_error_upper_bound":0.5162766495903575,"train_acc":51,"gen_error_loss":-2.5710820219251858,"R_s_upper_bound":0.22763339742787675,"_runtime":7,"train_loss":13.1243654039171}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170053-v4lhu7zz/run-v4lhu7zz.wandb b/wandb/run-20260428_170053-v4lhu7zz/run-v4lhu7zz.wandb
+new file mode 100644
+index 0000000..99880a1
+Binary files /dev/null and b/wandb/run-20260428_170053-v4lhu7zz/run-v4lhu7zz.wandb differ
+diff --git a/wandb/run-20260428_170105-um3ea84p/files/code/run_perturb.py b/wandb/run-20260428_170105-um3ea84p/files/code/run_perturb.py
+new file mode 100644
+index 0000000..0d7203b
+--- /dev/null
++++ b/wandb/run-20260428_170105-um3ea84p/files/code/run_perturb.py
+@@ -0,0 +1,236 @@
++import csv
++import os.path as osp
++import random
++import wandb
++import argparse
++
++import numpy as np
++from torch.nn import BCEWithLogitsLoss
++import pandas as pd
++import torch
++import torch.nn.functional as F
++from torch_geometric.loader import DataLoader
++from torch_geometric.transforms import Compose
++
++from tqdm import tqdm
++from src.utils import OneHotNodeLabel, CalculateWLColors
++from src.net import Net, GCN
++from collections import defaultdict
++import networkx as nx
++import os
++from Synthetic_benchmarks import ParentClassificationDataset, RandomLabelMemorizationDataset
++
++batch_size = 16
++num_layers = [1, 2, 3, 4, 5, 6]
++lr = 0.0001
++epochs = 500
++lipschits_constant_loss = 1.0
++delta_prob = 0.95
++#seeds = [1, 2, 3, 4, 5] 
++num_reps = 5
++hd = 16
++early_stopping = 20
++
++
++def init_dataset(dataset_name, transforms, path, k):
++    if dataset_name == 'memo_all_pert':
++        # ### MEMORIZATION TASK 
++        k = int(k)
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
++    elif dataset_name == "memo_partial_pert":
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=3, rho=k)
++
++    ### PARENT CLASSIFICATION TASK
++    elif 'parent' in dataset_name:
++        parent_A = nx.random_regular_graph(3, 30, seed=0)
++        parent_B = nx.random_regular_graph(3, 30, seed=1)
++        parent_types = "regular_vs_regular"
++
++        root = os.path.join(path, 'parent_classification', parent_types)
++
++        if dataset_name == "parent_class_all":
++            k=int(k)
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
++        else:
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
++    else:
++        raise Exception("No valid dataset specified")
++
++    return dataset
++
++
++def main(args):
++    seed = args.seed
++    dataset_name = args.dataset
++    torch.manual_seed(seed)
++    random.seed(seed)
++    np.random.seed(seed)
++    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++    #device = torch.device('cpu')
++    print("Using device", device)
++
++
++    print("Loading dataset", dataset_name, end='... ')
++    root_path = osp.join(osp.dirname(osp.realpath(__file__)), "data" )
++
++    transform = Compose([CalculateWLColors(num_layers)])
++    dataset = init_dataset(dataset_name, transform, path=root_path, k=args.k).shuffle()
++
++
++    m = len(dataset) - (len(dataset) // 10)
++
++    for l in num_layers:
++        print("Number of layers:", l)
++        config = {
++            "delta_prob": delta_prob,
++            "lr": lr,
++            "num_layers": l,
++            "epochs": epochs,
++            "hidden_dimension": hd,
++            "early_stopping": early_stopping,
++            "batch_size": batch_size,
++            "dataset": dataset_name,
++            "k": args.k,
++            "seed": args.seed
++        }
++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++            dataset.shuffle()
++            p_dict = defaultdict(int)
++
++            for g in dataset[0:m]:
++                p_dict[g[f'wl_hash']] += 1
++
++            p_theory_upper_bound = 0.0
++            p_theory_lower_bound = 0.0
++
++            for c_j in p_dict.keys():
++                mu_j = p_dict[c_j]/m
++                p_theory_upper_bound += np.sqrt(mu_j/m)
++                p_theory_lower_bound += np.sqrt(mu_j /(2.0*m))
++
++            gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++            gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++
++
++
++            train_dataset = dataset[0:m]
++            train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
++
++            test_dataset = dataset[m:]
++            test_loader = DataLoader(test_dataset, batch_size)
++
++            # model = Net(dataset.num_features, hd, 1, l).to(device) # Binary
++            model = GCN(dataset.num_features, hd, 1, l).to(device) # Binary
++            print("Model params:", sum(p.numel() for p in model.parameters() if p.requires_grad))
++
++            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
++
++            def train():
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++                model.train()
++
++                total_loss = 0
++                for data in train_loader:
++                    data = data.to(device)
++                    optimizer.zero_grad()
++                    out = model(data.x, data.edge_index, data.batch)
++                    # print(out)
++                    labels = data.y.to(torch.float32).view(out.shape) # Convert data.y to float from int
++                    labels = (labels+1) / 2
++                    loss = loss_fn(out, labels) #population_risk(out, labels)
++                    loss.backward()
++                    optimizer.step()
++                    total_loss += float(loss) * data.num_graphs
++                return total_loss / len(train_loader.dataset)
++
++
++            @torch.no_grad()
++            def test(loader):
++                model.eval()
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++
++                with torch.no_grad():
++                    total_correct = 0
++                    total_loss = 0
++                    for data in loader:
++                        data = data.to(device)
++                        pred = model(data.x, data.edge_index, data.batch)
++                        labels = data.y.to(torch.float32).view(pred.shape)
++                        labels = (labels+1) / 2
++                        loss = loss_fn(pred, labels)
++                        # pred = torch.argmax(pred, dim=1)
++                        pred = (pred.squeeze(-1) > 0.0).long()
++                        target = ((data.y.squeeze(-1) + 1) / 2).long()  # converts -1/1 → 0/1
++                        total_correct += int((pred == target).sum())
++                        total_loss += float(loss) * data.num_graphs
++                return total_correct / len(loader.dataset), total_loss / len(loader.dataset)
++            
++            last_best_train = 1000
++            epoch = 0
++            last_update_train = 0
++
++            for epoch in tqdm(range(epochs)):
++                loss = train()
++                train_acc, train_loss = test(train_loader)
++                test_acc, test_loss = test(test_loader)
++
++                train_acc *= 100.0
++                test_acc *= 100.0
++
++                is_early_stop = last_update_train >= early_stopping
++                if 100 - train_acc < 1e-2 or is_early_stop or epoch == epochs:
++                    print(f"Stopped at acc {train_acc} and ES {is_early_stop}")
++                    break
++
++                if loss < last_best_train:
++                    last_best_train = loss
++                    last_update_train = 0
++
++                last_update_train += 1
++                run.log({
++                    "epoch": epoch,
++                    "train_acc": train_acc,
++                    "test_acc": test_acc,
++                    "train_loss": train_loss,
++                    "test_loss": test_loss,
++                    "gen_error_loss": train_loss - test_loss,
++                    "gen_err_acc": train_acc - test_acc,
++
++                })
++
++            run.log({
++                "R_s_upper_bound": p_theory_upper_bound,
++                "R_s_lower_bound": p_theory_lower_bound,
++                "gen_error_upper_bound": gen_err_upper_bound,
++                "gen_error_lower_bound": gen_err_lower_bound,
++            })
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(
++        description="Argument parser for experiment configurations."
++    )
++
++    parser.add_argument(
++        "--seed",
++        type=int,
++        default=0,
++        help="Seed for RNG",
++    )
++    parser.add_argument(
++        "--dataset",
++        type=str,
++        required=True,
++        help="Dataset",
++        choices = ["memo_all_pert", "memo_partial_pert", "parent_class_all", "parent_class_partial"]
++    )
++    parser.add_argument(
++        "--k",
++        type=float,
++        required=True,
++        help="Dataset",
++    )
++
++    args = parser.parse_args()
++    main(args)
+diff --git a/wandb/run-20260428_170105-um3ea84p/files/config.yaml b/wandb/run-20260428_170105-um3ea84p/files/config.yaml
+new file mode 100644
+index 0000000..4b326de
+--- /dev/null
++++ b/wandb/run-20260428_170105-um3ea84p/files/config.yaml
+@@ -0,0 +1,78 @@
++_wandb:
++    value:
++        cli_version: 0.26.1
++        code_path: code/run_perturb.py
++        e:
++            din69an9m1qvocofpleymm8n3x0b2lb3:
++                apple:
++                    ecpuCores: 6
++                    gpuCores: 10
++                    macModel: Mac16,12
++                    memoryGb: 16
++                    name: Apple M4
++                    pcpuCores: 4
++                    ramTotalBytes: "17179869184"
++                args:
++                    - --dataset
++                    - memo_partial_pert
++                    - --k
++                    - "0.2"
++                codePath: run_perturb.py
++                codePathLocal: run_perturb.py
++                cpu_count: 10
++                cpu_count_logical: 10
++                disk:
++                    /:
++                        total: "494384795648"
++                        used: "151297163264"
++                email: caterina.graziani2@unisi.it
++                executable: /Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python
++                git:
++                    commit: 012a453129bdb5dd55c98e91a6367a91f82e344c
++                    remote: https://github.com/EOkoyomon/wl_vs_rademacher.git
++                host: MacBook-Air-di-Caterina.local
++                memory:
++                    total: "17179869184"
++                os: macOS-15.5-arm64-arm-64bit
++                program: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py
++                python: CPython 3.9.6
++                root: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher
++                startedAt: "2026-04-28T15:01:05.326289Z"
++                writerId: din69an9m1qvocofpleymm8n3x0b2lb3
++        m: []
++        python_version: 3.9.6
++        t:
++            "1":
++                - 1
++                - 77
++            "2":
++                - 1
++                - 77
++            "3":
++                - 2
++                - 13
++                - 16
++            "4": 3.9.6
++            "5": 0.26.1
++            "12": 0.26.1
++            "13": darwin-arm64
++batch_size:
++    value: 16
++dataset:
++    value: memo_partial_pert
++delta_prob:
++    value: 0.95
++early_stopping:
++    value: 20
++epochs:
++    value: 500
++hidden_dimension:
++    value: 16
++k:
++    value: 0.2
++lr:
++    value: 0.0001
++num_layers:
++    value: 3
++seed:
++    value: 0
+diff --git a/wandb/run-20260428_170105-um3ea84p/files/diff.patch b/wandb/run-20260428_170105-um3ea84p/files/diff.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170105-um3ea84p/files/diff.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170105-um3ea84p/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch b/wandb/run-20260428_170105-um3ea84p/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170105-um3ea84p/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170105-um3ea84p/files/requirements.txt b/wandb/run-20260428_170105-um3ea84p/files/requirements.txt
+new file mode 100644
+index 0000000..734859c
+--- /dev/null
++++ b/wandb/run-20260428_170105-um3ea84p/files/requirements.txt
+@@ -0,0 +1,58 @@
++async-timeout==5.0.1
++requests==2.32.5
++psutil==7.2.1
++aiohttp==3.13.3
++tzdata==2026.2
++GitPython==3.1.48
++matplotlib==3.9.4
++certifi==2026.1.4
++sentry-sdk==2.58.0
++platformdirs==4.4.0
++propcache==0.4.1
++torch==2.8.0
++filelock==3.19.1
++pip==25.3
++multidict==6.7.0
++idna==3.11
++tqdm==4.67.1
++click==8.1.8
++numpy==2.0.2
++fsspec==2025.10.0
++pydantic_core==2.46.3
++charset-normalizer==3.4.4
++sympy==1.14.0
++kiwisolver==1.4.7
++eval_type_backport==0.3.1
++wandb==0.26.1
++torch-geometric==2.6.1
++contourpy==1.3.0
++pytz==2026.1.post1
++protobuf==6.33.6
++gitdb==4.0.12
++smmap==5.0.3
++python-dateutil==2.9.0.post0
++mpmath==1.3.0
++PyYAML==6.0.3
++fonttools==4.60.2
++urllib3==2.6.3
++frozenlist==1.8.0
++pydantic==2.13.3
++typing_extensions==4.15.0
++aiosignal==1.4.0
++packaging==25.0
++cycler==0.12.1
++Jinja2==3.1.6
++pyparsing==3.3.2
++pandas==2.3.3
++MarkupSafe==3.0.3
++aiohappyeyeballs==2.6.1
++attrs==25.4.0
++networkx==3.2.1
++pillow==11.3.0
++typing-inspection==0.4.2
++zipp==3.23.0
++annotated-types==0.7.0
++setuptools==58.0.4
++six==1.17.0
++yarl==1.22.0
++importlib_resources==6.5.2
+diff --git a/wandb/run-20260428_170105-um3ea84p/files/wandb-metadata.json b/wandb/run-20260428_170105-um3ea84p/files/wandb-metadata.json
+new file mode 100644
+index 0000000..294a4b8
+--- /dev/null
++++ b/wandb/run-20260428_170105-um3ea84p/files/wandb-metadata.json
+@@ -0,0 +1,43 @@
++{
++  "os":  "macOS-15.5-arm64-arm-64bit",
++  "python":  "CPython 3.9.6",
++  "startedAt":  "2026-04-28T15:01:05.326289Z",
++  "args":  [
++    "--dataset",
++    "memo_partial_pert",
++    "--k",
++    "0.2"
++  ],
++  "program":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py",
++  "codePath":  "run_perturb.py",
++  "codePathLocal":  "run_perturb.py",
++  "git":  {
++    "remote":  "https://github.com/EOkoyomon/wl_vs_rademacher.git",
++    "commit":  "012a453129bdb5dd55c98e91a6367a91f82e344c"
++  },
++  "email":  "caterina.graziani2@unisi.it",
++  "root":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher",
++  "host":  "MacBook-Air-di-Caterina.local",
++  "executable":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python",
++  "cpu_count":  10,
++  "cpu_count_logical":  10,
++  "disk":  {
++    "/":  {
++      "total":  "494384795648",
++      "used":  "151297163264"
++    }
++  },
++  "memory":  {
++    "total":  "17179869184"
++  },
++  "apple":  {
++    "name":  "Apple M4",
++    "ecpuCores":  6,
++    "pcpuCores":  4,
++    "gpuCores":  10,
++    "memoryGb":  16,
++    "ramTotalBytes":  "17179869184",
++    "macModel":  "Mac16,12"
++  },
++  "writerId":  "din69an9m1qvocofpleymm8n3x0b2lb3"
++}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170105-um3ea84p/files/wandb-summary.json b/wandb/run-20260428_170105-um3ea84p/files/wandb-summary.json
+new file mode 100644
+index 0000000..b94bcd5
+--- /dev/null
++++ b/wandb/run-20260428_170105-um3ea84p/files/wandb-summary.json
+@@ -0,0 +1 @@
++{"gen_error_lower_bound":0.3829320926261732,"R_s_lower_bound":0.16096111894578463,"_step":32,"gen_error_upper_bound":0.5162766495903575,"epoch":31,"train_acc":51,"gen_err_acc":10,"R_s_upper_bound":0.22763339742787675,"gen_error_loss":-0.07706448660956489,"test_loss":0.8517796134948731,"_wandb":{"runtime":5},"test_acc":41,"train_loss":0.7747151268853082,"_runtime":5,"_timestamp":1.777388472211797e+09}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170105-um3ea84p/run-um3ea84p.wandb b/wandb/run-20260428_170105-um3ea84p/run-um3ea84p.wandb
+new file mode 100644
+index 0000000..165f93a
+Binary files /dev/null and b/wandb/run-20260428_170105-um3ea84p/run-um3ea84p.wandb differ
+diff --git a/wandb/run-20260428_170114-9y9xr5mx/files/code/run_perturb.py b/wandb/run-20260428_170114-9y9xr5mx/files/code/run_perturb.py
+new file mode 100644
+index 0000000..0d7203b
+--- /dev/null
++++ b/wandb/run-20260428_170114-9y9xr5mx/files/code/run_perturb.py
+@@ -0,0 +1,236 @@
++import csv
++import os.path as osp
++import random
++import wandb
++import argparse
++
++import numpy as np
++from torch.nn import BCEWithLogitsLoss
++import pandas as pd
++import torch
++import torch.nn.functional as F
++from torch_geometric.loader import DataLoader
++from torch_geometric.transforms import Compose
++
++from tqdm import tqdm
++from src.utils import OneHotNodeLabel, CalculateWLColors
++from src.net import Net, GCN
++from collections import defaultdict
++import networkx as nx
++import os
++from Synthetic_benchmarks import ParentClassificationDataset, RandomLabelMemorizationDataset
++
++batch_size = 16
++num_layers = [1, 2, 3, 4, 5, 6]
++lr = 0.0001
++epochs = 500
++lipschits_constant_loss = 1.0
++delta_prob = 0.95
++#seeds = [1, 2, 3, 4, 5] 
++num_reps = 5
++hd = 16
++early_stopping = 20
++
++
++def init_dataset(dataset_name, transforms, path, k):
++    if dataset_name == 'memo_all_pert':
++        # ### MEMORIZATION TASK 
++        k = int(k)
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
++    elif dataset_name == "memo_partial_pert":
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=3, rho=k)
++
++    ### PARENT CLASSIFICATION TASK
++    elif 'parent' in dataset_name:
++        parent_A = nx.random_regular_graph(3, 30, seed=0)
++        parent_B = nx.random_regular_graph(3, 30, seed=1)
++        parent_types = "regular_vs_regular"
++
++        root = os.path.join(path, 'parent_classification', parent_types)
++
++        if dataset_name == "parent_class_all":
++            k=int(k)
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
++        else:
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
++    else:
++        raise Exception("No valid dataset specified")
++
++    return dataset
++
++
++def main(args):
++    seed = args.seed
++    dataset_name = args.dataset
++    torch.manual_seed(seed)
++    random.seed(seed)
++    np.random.seed(seed)
++    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++    #device = torch.device('cpu')
++    print("Using device", device)
++
++
++    print("Loading dataset", dataset_name, end='... ')
++    root_path = osp.join(osp.dirname(osp.realpath(__file__)), "data" )
++
++    transform = Compose([CalculateWLColors(num_layers)])
++    dataset = init_dataset(dataset_name, transform, path=root_path, k=args.k).shuffle()
++
++
++    m = len(dataset) - (len(dataset) // 10)
++
++    for l in num_layers:
++        print("Number of layers:", l)
++        config = {
++            "delta_prob": delta_prob,
++            "lr": lr,
++            "num_layers": l,
++            "epochs": epochs,
++            "hidden_dimension": hd,
++            "early_stopping": early_stopping,
++            "batch_size": batch_size,
++            "dataset": dataset_name,
++            "k": args.k,
++            "seed": args.seed
++        }
++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++            dataset.shuffle()
++            p_dict = defaultdict(int)
++
++            for g in dataset[0:m]:
++                p_dict[g[f'wl_hash']] += 1
++
++            p_theory_upper_bound = 0.0
++            p_theory_lower_bound = 0.0
++
++            for c_j in p_dict.keys():
++                mu_j = p_dict[c_j]/m
++                p_theory_upper_bound += np.sqrt(mu_j/m)
++                p_theory_lower_bound += np.sqrt(mu_j /(2.0*m))
++
++            gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++            gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++
++
++
++            train_dataset = dataset[0:m]
++            train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
++
++            test_dataset = dataset[m:]
++            test_loader = DataLoader(test_dataset, batch_size)
++
++            # model = Net(dataset.num_features, hd, 1, l).to(device) # Binary
++            model = GCN(dataset.num_features, hd, 1, l).to(device) # Binary
++            print("Model params:", sum(p.numel() for p in model.parameters() if p.requires_grad))
++
++            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
++
++            def train():
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++                model.train()
++
++                total_loss = 0
++                for data in train_loader:
++                    data = data.to(device)
++                    optimizer.zero_grad()
++                    out = model(data.x, data.edge_index, data.batch)
++                    # print(out)
++                    labels = data.y.to(torch.float32).view(out.shape) # Convert data.y to float from int
++                    labels = (labels+1) / 2
++                    loss = loss_fn(out, labels) #population_risk(out, labels)
++                    loss.backward()
++                    optimizer.step()
++                    total_loss += float(loss) * data.num_graphs
++                return total_loss / len(train_loader.dataset)
++
++
++            @torch.no_grad()
++            def test(loader):
++                model.eval()
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++
++                with torch.no_grad():
++                    total_correct = 0
++                    total_loss = 0
++                    for data in loader:
++                        data = data.to(device)
++                        pred = model(data.x, data.edge_index, data.batch)
++                        labels = data.y.to(torch.float32).view(pred.shape)
++                        labels = (labels+1) / 2
++                        loss = loss_fn(pred, labels)
++                        # pred = torch.argmax(pred, dim=1)
++                        pred = (pred.squeeze(-1) > 0.0).long()
++                        target = ((data.y.squeeze(-1) + 1) / 2).long()  # converts -1/1 → 0/1
++                        total_correct += int((pred == target).sum())
++                        total_loss += float(loss) * data.num_graphs
++                return total_correct / len(loader.dataset), total_loss / len(loader.dataset)
++            
++            last_best_train = 1000
++            epoch = 0
++            last_update_train = 0
++
++            for epoch in tqdm(range(epochs)):
++                loss = train()
++                train_acc, train_loss = test(train_loader)
++                test_acc, test_loss = test(test_loader)
++
++                train_acc *= 100.0
++                test_acc *= 100.0
++
++                is_early_stop = last_update_train >= early_stopping
++                if 100 - train_acc < 1e-2 or is_early_stop or epoch == epochs:
++                    print(f"Stopped at acc {train_acc} and ES {is_early_stop}")
++                    break
++
++                if loss < last_best_train:
++                    last_best_train = loss
++                    last_update_train = 0
++
++                last_update_train += 1
++                run.log({
++                    "epoch": epoch,
++                    "train_acc": train_acc,
++                    "test_acc": test_acc,
++                    "train_loss": train_loss,
++                    "test_loss": test_loss,
++                    "gen_error_loss": train_loss - test_loss,
++                    "gen_err_acc": train_acc - test_acc,
++
++                })
++
++            run.log({
++                "R_s_upper_bound": p_theory_upper_bound,
++                "R_s_lower_bound": p_theory_lower_bound,
++                "gen_error_upper_bound": gen_err_upper_bound,
++                "gen_error_lower_bound": gen_err_lower_bound,
++            })
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(
++        description="Argument parser for experiment configurations."
++    )
++
++    parser.add_argument(
++        "--seed",
++        type=int,
++        default=0,
++        help="Seed for RNG",
++    )
++    parser.add_argument(
++        "--dataset",
++        type=str,
++        required=True,
++        help="Dataset",
++        choices = ["memo_all_pert", "memo_partial_pert", "parent_class_all", "parent_class_partial"]
++    )
++    parser.add_argument(
++        "--k",
++        type=float,
++        required=True,
++        help="Dataset",
++    )
++
++    args = parser.parse_args()
++    main(args)
+diff --git a/wandb/run-20260428_170114-9y9xr5mx/files/config.yaml b/wandb/run-20260428_170114-9y9xr5mx/files/config.yaml
+new file mode 100644
+index 0000000..7002058
+--- /dev/null
++++ b/wandb/run-20260428_170114-9y9xr5mx/files/config.yaml
+@@ -0,0 +1,78 @@
++_wandb:
++    value:
++        cli_version: 0.26.1
++        code_path: code/run_perturb.py
++        e:
++            489flnxonjnm7704eecoca6273a3ksce:
++                apple:
++                    ecpuCores: 6
++                    gpuCores: 10
++                    macModel: Mac16,12
++                    memoryGb: 16
++                    name: Apple M4
++                    pcpuCores: 4
++                    ramTotalBytes: "17179869184"
++                args:
++                    - --dataset
++                    - memo_partial_pert
++                    - --k
++                    - "0.2"
++                codePath: run_perturb.py
++                codePathLocal: run_perturb.py
++                cpu_count: 10
++                cpu_count_logical: 10
++                disk:
++                    /:
++                        total: "494384795648"
++                        used: "151298822144"
++                email: caterina.graziani2@unisi.it
++                executable: /Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python
++                git:
++                    commit: 012a453129bdb5dd55c98e91a6367a91f82e344c
++                    remote: https://github.com/EOkoyomon/wl_vs_rademacher.git
++                host: MacBook-Air-di-Caterina.local
++                memory:
++                    total: "17179869184"
++                os: macOS-15.5-arm64-arm-64bit
++                program: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py
++                python: CPython 3.9.6
++                root: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher
++                startedAt: "2026-04-28T15:01:14.267171Z"
++                writerId: 489flnxonjnm7704eecoca6273a3ksce
++        m: []
++        python_version: 3.9.6
++        t:
++            "1":
++                - 1
++                - 77
++            "2":
++                - 1
++                - 77
++            "3":
++                - 2
++                - 13
++                - 16
++            "4": 3.9.6
++            "5": 0.26.1
++            "12": 0.26.1
++            "13": darwin-arm64
++batch_size:
++    value: 16
++dataset:
++    value: memo_partial_pert
++delta_prob:
++    value: 0.95
++early_stopping:
++    value: 20
++epochs:
++    value: 500
++hidden_dimension:
++    value: 16
++k:
++    value: 0.2
++lr:
++    value: 0.0001
++num_layers:
++    value: 4
++seed:
++    value: 0
+diff --git a/wandb/run-20260428_170114-9y9xr5mx/files/diff.patch b/wandb/run-20260428_170114-9y9xr5mx/files/diff.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170114-9y9xr5mx/files/diff.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170114-9y9xr5mx/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch b/wandb/run-20260428_170114-9y9xr5mx/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170114-9y9xr5mx/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170114-9y9xr5mx/files/requirements.txt b/wandb/run-20260428_170114-9y9xr5mx/files/requirements.txt
+new file mode 100644
+index 0000000..734859c
+--- /dev/null
++++ b/wandb/run-20260428_170114-9y9xr5mx/files/requirements.txt
+@@ -0,0 +1,58 @@
++async-timeout==5.0.1
++requests==2.32.5
++psutil==7.2.1
++aiohttp==3.13.3
++tzdata==2026.2
++GitPython==3.1.48
++matplotlib==3.9.4
++certifi==2026.1.4
++sentry-sdk==2.58.0
++platformdirs==4.4.0
++propcache==0.4.1
++torch==2.8.0
++filelock==3.19.1
++pip==25.3
++multidict==6.7.0
++idna==3.11
++tqdm==4.67.1
++click==8.1.8
++numpy==2.0.2
++fsspec==2025.10.0
++pydantic_core==2.46.3
++charset-normalizer==3.4.4
++sympy==1.14.0
++kiwisolver==1.4.7
++eval_type_backport==0.3.1
++wandb==0.26.1
++torch-geometric==2.6.1
++contourpy==1.3.0
++pytz==2026.1.post1
++protobuf==6.33.6
++gitdb==4.0.12
++smmap==5.0.3
++python-dateutil==2.9.0.post0
++mpmath==1.3.0
++PyYAML==6.0.3
++fonttools==4.60.2
++urllib3==2.6.3
++frozenlist==1.8.0
++pydantic==2.13.3
++typing_extensions==4.15.0
++aiosignal==1.4.0
++packaging==25.0
++cycler==0.12.1
++Jinja2==3.1.6
++pyparsing==3.3.2
++pandas==2.3.3
++MarkupSafe==3.0.3
++aiohappyeyeballs==2.6.1
++attrs==25.4.0
++networkx==3.2.1
++pillow==11.3.0
++typing-inspection==0.4.2
++zipp==3.23.0
++annotated-types==0.7.0
++setuptools==58.0.4
++six==1.17.0
++yarl==1.22.0
++importlib_resources==6.5.2
+diff --git a/wandb/run-20260428_170114-9y9xr5mx/files/wandb-metadata.json b/wandb/run-20260428_170114-9y9xr5mx/files/wandb-metadata.json
+new file mode 100644
+index 0000000..d24d848
+--- /dev/null
++++ b/wandb/run-20260428_170114-9y9xr5mx/files/wandb-metadata.json
+@@ -0,0 +1,43 @@
++{
++  "os":  "macOS-15.5-arm64-arm-64bit",
++  "python":  "CPython 3.9.6",
++  "startedAt":  "2026-04-28T15:01:14.267171Z",
++  "args":  [
++    "--dataset",
++    "memo_partial_pert",
++    "--k",
++    "0.2"
++  ],
++  "program":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py",
++  "codePath":  "run_perturb.py",
++  "codePathLocal":  "run_perturb.py",
++  "git":  {
++    "remote":  "https://github.com/EOkoyomon/wl_vs_rademacher.git",
++    "commit":  "012a453129bdb5dd55c98e91a6367a91f82e344c"
++  },
++  "email":  "caterina.graziani2@unisi.it",
++  "root":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher",
++  "host":  "MacBook-Air-di-Caterina.local",
++  "executable":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python",
++  "cpu_count":  10,
++  "cpu_count_logical":  10,
++  "disk":  {
++    "/":  {
++      "total":  "494384795648",
++      "used":  "151298822144"
++    }
++  },
++  "memory":  {
++    "total":  "17179869184"
++  },
++  "apple":  {
++    "name":  "Apple M4",
++    "ecpuCores":  6,
++    "pcpuCores":  4,
++    "gpuCores":  10,
++    "memoryGb":  16,
++    "ramTotalBytes":  "17179869184",
++    "macModel":  "Mac16,12"
++  },
++  "writerId":  "489flnxonjnm7704eecoca6273a3ksce"
++}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170114-9y9xr5mx/files/wandb-summary.json b/wandb/run-20260428_170114-9y9xr5mx/files/wandb-summary.json
+new file mode 100644
+index 0000000..44c9477
+--- /dev/null
++++ b/wandb/run-20260428_170114-9y9xr5mx/files/wandb-summary.json
+@@ -0,0 +1 @@
++{"test_acc":42,"gen_error_loss":-0.07534533606635208,"R_s_lower_bound":0.16096111894578463,"gen_error_upper_bound":0.5162766495903575,"_step":48,"train_acc":51.44444444444445,"gen_error_lower_bound":0.3829320926261732,"test_loss":0.8664017200469971,"_timestamp":1.777388485374012e+09,"_wandb":{"runtime":9},"_runtime":9,"R_s_upper_bound":0.22763339742787675,"epoch":47,"gen_err_acc":9.44444444444445,"train_loss":0.791056383980645}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170114-9y9xr5mx/run-9y9xr5mx.wandb b/wandb/run-20260428_170114-9y9xr5mx/run-9y9xr5mx.wandb
+new file mode 100644
+index 0000000..05a62f0
+Binary files /dev/null and b/wandb/run-20260428_170114-9y9xr5mx/run-9y9xr5mx.wandb differ
+diff --git a/wandb/run-20260428_170127-9frunr6y/files/code/run_perturb.py b/wandb/run-20260428_170127-9frunr6y/files/code/run_perturb.py
+new file mode 100644
+index 0000000..0d7203b
+--- /dev/null
++++ b/wandb/run-20260428_170127-9frunr6y/files/code/run_perturb.py
+@@ -0,0 +1,236 @@
++import csv
++import os.path as osp
++import random
++import wandb
++import argparse
++
++import numpy as np
++from torch.nn import BCEWithLogitsLoss
++import pandas as pd
++import torch
++import torch.nn.functional as F
++from torch_geometric.loader import DataLoader
++from torch_geometric.transforms import Compose
++
++from tqdm import tqdm
++from src.utils import OneHotNodeLabel, CalculateWLColors
++from src.net import Net, GCN
++from collections import defaultdict
++import networkx as nx
++import os
++from Synthetic_benchmarks import ParentClassificationDataset, RandomLabelMemorizationDataset
++
++batch_size = 16
++num_layers = [1, 2, 3, 4, 5, 6]
++lr = 0.0001
++epochs = 500
++lipschits_constant_loss = 1.0
++delta_prob = 0.95
++#seeds = [1, 2, 3, 4, 5] 
++num_reps = 5
++hd = 16
++early_stopping = 20
++
++
++def init_dataset(dataset_name, transforms, path, k):
++    if dataset_name == 'memo_all_pert':
++        # ### MEMORIZATION TASK 
++        k = int(k)
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
++    elif dataset_name == "memo_partial_pert":
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=3, rho=k)
++
++    ### PARENT CLASSIFICATION TASK
++    elif 'parent' in dataset_name:
++        parent_A = nx.random_regular_graph(3, 30, seed=0)
++        parent_B = nx.random_regular_graph(3, 30, seed=1)
++        parent_types = "regular_vs_regular"
++
++        root = os.path.join(path, 'parent_classification', parent_types)
++
++        if dataset_name == "parent_class_all":
++            k=int(k)
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
++        else:
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
++    else:
++        raise Exception("No valid dataset specified")
++
++    return dataset
++
++
++def main(args):
++    seed = args.seed
++    dataset_name = args.dataset
++    torch.manual_seed(seed)
++    random.seed(seed)
++    np.random.seed(seed)
++    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++    #device = torch.device('cpu')
++    print("Using device", device)
++
++
++    print("Loading dataset", dataset_name, end='... ')
++    root_path = osp.join(osp.dirname(osp.realpath(__file__)), "data" )
++
++    transform = Compose([CalculateWLColors(num_layers)])
++    dataset = init_dataset(dataset_name, transform, path=root_path, k=args.k).shuffle()
++
++
++    m = len(dataset) - (len(dataset) // 10)
++
++    for l in num_layers:
++        print("Number of layers:", l)
++        config = {
++            "delta_prob": delta_prob,
++            "lr": lr,
++            "num_layers": l,
++            "epochs": epochs,
++            "hidden_dimension": hd,
++            "early_stopping": early_stopping,
++            "batch_size": batch_size,
++            "dataset": dataset_name,
++            "k": args.k,
++            "seed": args.seed
++        }
++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++            dataset.shuffle()
++            p_dict = defaultdict(int)
++
++            for g in dataset[0:m]:
++                p_dict[g[f'wl_hash']] += 1
++
++            p_theory_upper_bound = 0.0
++            p_theory_lower_bound = 0.0
++
++            for c_j in p_dict.keys():
++                mu_j = p_dict[c_j]/m
++                p_theory_upper_bound += np.sqrt(mu_j/m)
++                p_theory_lower_bound += np.sqrt(mu_j /(2.0*m))
++
++            gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++            gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++
++
++
++            train_dataset = dataset[0:m]
++            train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
++
++            test_dataset = dataset[m:]
++            test_loader = DataLoader(test_dataset, batch_size)
++
++            # model = Net(dataset.num_features, hd, 1, l).to(device) # Binary
++            model = GCN(dataset.num_features, hd, 1, l).to(device) # Binary
++            print("Model params:", sum(p.numel() for p in model.parameters() if p.requires_grad))
++
++            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
++
++            def train():
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++                model.train()
++
++                total_loss = 0
++                for data in train_loader:
++                    data = data.to(device)
++                    optimizer.zero_grad()
++                    out = model(data.x, data.edge_index, data.batch)
++                    # print(out)
++                    labels = data.y.to(torch.float32).view(out.shape) # Convert data.y to float from int
++                    labels = (labels+1) / 2
++                    loss = loss_fn(out, labels) #population_risk(out, labels)
++                    loss.backward()
++                    optimizer.step()
++                    total_loss += float(loss) * data.num_graphs
++                return total_loss / len(train_loader.dataset)
++
++
++            @torch.no_grad()
++            def test(loader):
++                model.eval()
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++
++                with torch.no_grad():
++                    total_correct = 0
++                    total_loss = 0
++                    for data in loader:
++                        data = data.to(device)
++                        pred = model(data.x, data.edge_index, data.batch)
++                        labels = data.y.to(torch.float32).view(pred.shape)
++                        labels = (labels+1) / 2
++                        loss = loss_fn(pred, labels)
++                        # pred = torch.argmax(pred, dim=1)
++                        pred = (pred.squeeze(-1) > 0.0).long()
++                        target = ((data.y.squeeze(-1) + 1) / 2).long()  # converts -1/1 → 0/1
++                        total_correct += int((pred == target).sum())
++                        total_loss += float(loss) * data.num_graphs
++                return total_correct / len(loader.dataset), total_loss / len(loader.dataset)
++            
++            last_best_train = 1000
++            epoch = 0
++            last_update_train = 0
++
++            for epoch in tqdm(range(epochs)):
++                loss = train()
++                train_acc, train_loss = test(train_loader)
++                test_acc, test_loss = test(test_loader)
++
++                train_acc *= 100.0
++                test_acc *= 100.0
++
++                is_early_stop = last_update_train >= early_stopping
++                if 100 - train_acc < 1e-2 or is_early_stop or epoch == epochs:
++                    print(f"Stopped at acc {train_acc} and ES {is_early_stop}")
++                    break
++
++                if loss < last_best_train:
++                    last_best_train = loss
++                    last_update_train = 0
++
++                last_update_train += 1
++                run.log({
++                    "epoch": epoch,
++                    "train_acc": train_acc,
++                    "test_acc": test_acc,
++                    "train_loss": train_loss,
++                    "test_loss": test_loss,
++                    "gen_error_loss": train_loss - test_loss,
++                    "gen_err_acc": train_acc - test_acc,
++
++                })
++
++            run.log({
++                "R_s_upper_bound": p_theory_upper_bound,
++                "R_s_lower_bound": p_theory_lower_bound,
++                "gen_error_upper_bound": gen_err_upper_bound,
++                "gen_error_lower_bound": gen_err_lower_bound,
++            })
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(
++        description="Argument parser for experiment configurations."
++    )
++
++    parser.add_argument(
++        "--seed",
++        type=int,
++        default=0,
++        help="Seed for RNG",
++    )
++    parser.add_argument(
++        "--dataset",
++        type=str,
++        required=True,
++        help="Dataset",
++        choices = ["memo_all_pert", "memo_partial_pert", "parent_class_all", "parent_class_partial"]
++    )
++    parser.add_argument(
++        "--k",
++        type=float,
++        required=True,
++        help="Dataset",
++    )
++
++    args = parser.parse_args()
++    main(args)
+diff --git a/wandb/run-20260428_170127-9frunr6y/files/config.yaml b/wandb/run-20260428_170127-9frunr6y/files/config.yaml
+new file mode 100644
+index 0000000..0094e97
+--- /dev/null
++++ b/wandb/run-20260428_170127-9frunr6y/files/config.yaml
+@@ -0,0 +1,78 @@
++_wandb:
++    value:
++        cli_version: 0.26.1
++        code_path: code/run_perturb.py
++        e:
++            ap62h31t9c6t7yuowody7fqhfmd6p4c0:
++                apple:
++                    ecpuCores: 6
++                    gpuCores: 10
++                    macModel: Mac16,12
++                    memoryGb: 16
++                    name: Apple M4
++                    pcpuCores: 4
++                    ramTotalBytes: "17179869184"
++                args:
++                    - --dataset
++                    - memo_partial_pert
++                    - --k
++                    - "0.2"
++                codePath: run_perturb.py
++                codePathLocal: run_perturb.py
++                cpu_count: 10
++                cpu_count_logical: 10
++                disk:
++                    /:
++                        total: "494384795648"
++                        used: "151293243392"
++                email: caterina.graziani2@unisi.it
++                executable: /Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python
++                git:
++                    commit: 012a453129bdb5dd55c98e91a6367a91f82e344c
++                    remote: https://github.com/EOkoyomon/wl_vs_rademacher.git
++                host: MacBook-Air-di-Caterina.local
++                memory:
++                    total: "17179869184"
++                os: macOS-15.5-arm64-arm-64bit
++                program: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py
++                python: CPython 3.9.6
++                root: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher
++                startedAt: "2026-04-28T15:01:27.068312Z"
++                writerId: ap62h31t9c6t7yuowody7fqhfmd6p4c0
++        m: []
++        python_version: 3.9.6
++        t:
++            "1":
++                - 1
++                - 77
++            "2":
++                - 1
++                - 77
++            "3":
++                - 2
++                - 13
++                - 16
++            "4": 3.9.6
++            "5": 0.26.1
++            "12": 0.26.1
++            "13": darwin-arm64
++batch_size:
++    value: 16
++dataset:
++    value: memo_partial_pert
++delta_prob:
++    value: 0.95
++early_stopping:
++    value: 20
++epochs:
++    value: 500
++hidden_dimension:
++    value: 16
++k:
++    value: 0.2
++lr:
++    value: 0.0001
++num_layers:
++    value: 5
++seed:
++    value: 0
+diff --git a/wandb/run-20260428_170127-9frunr6y/files/diff.patch b/wandb/run-20260428_170127-9frunr6y/files/diff.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170127-9frunr6y/files/diff.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170127-9frunr6y/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch b/wandb/run-20260428_170127-9frunr6y/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170127-9frunr6y/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170127-9frunr6y/files/requirements.txt b/wandb/run-20260428_170127-9frunr6y/files/requirements.txt
+new file mode 100644
+index 0000000..734859c
+--- /dev/null
++++ b/wandb/run-20260428_170127-9frunr6y/files/requirements.txt
+@@ -0,0 +1,58 @@
++async-timeout==5.0.1
++requests==2.32.5
++psutil==7.2.1
++aiohttp==3.13.3
++tzdata==2026.2
++GitPython==3.1.48
++matplotlib==3.9.4
++certifi==2026.1.4
++sentry-sdk==2.58.0
++platformdirs==4.4.0
++propcache==0.4.1
++torch==2.8.0
++filelock==3.19.1
++pip==25.3
++multidict==6.7.0
++idna==3.11
++tqdm==4.67.1
++click==8.1.8
++numpy==2.0.2
++fsspec==2025.10.0
++pydantic_core==2.46.3
++charset-normalizer==3.4.4
++sympy==1.14.0
++kiwisolver==1.4.7
++eval_type_backport==0.3.1
++wandb==0.26.1
++torch-geometric==2.6.1
++contourpy==1.3.0
++pytz==2026.1.post1
++protobuf==6.33.6
++gitdb==4.0.12
++smmap==5.0.3
++python-dateutil==2.9.0.post0
++mpmath==1.3.0
++PyYAML==6.0.3
++fonttools==4.60.2
++urllib3==2.6.3
++frozenlist==1.8.0
++pydantic==2.13.3
++typing_extensions==4.15.0
++aiosignal==1.4.0
++packaging==25.0
++cycler==0.12.1
++Jinja2==3.1.6
++pyparsing==3.3.2
++pandas==2.3.3
++MarkupSafe==3.0.3
++aiohappyeyeballs==2.6.1
++attrs==25.4.0
++networkx==3.2.1
++pillow==11.3.0
++typing-inspection==0.4.2
++zipp==3.23.0
++annotated-types==0.7.0
++setuptools==58.0.4
++six==1.17.0
++yarl==1.22.0
++importlib_resources==6.5.2
+diff --git a/wandb/run-20260428_170127-9frunr6y/files/wandb-metadata.json b/wandb/run-20260428_170127-9frunr6y/files/wandb-metadata.json
+new file mode 100644
+index 0000000..70e86c3
+--- /dev/null
++++ b/wandb/run-20260428_170127-9frunr6y/files/wandb-metadata.json
+@@ -0,0 +1,43 @@
++{
++  "os":  "macOS-15.5-arm64-arm-64bit",
++  "python":  "CPython 3.9.6",
++  "startedAt":  "2026-04-28T15:01:27.068312Z",
++  "args":  [
++    "--dataset",
++    "memo_partial_pert",
++    "--k",
++    "0.2"
++  ],
++  "program":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py",
++  "codePath":  "run_perturb.py",
++  "codePathLocal":  "run_perturb.py",
++  "git":  {
++    "remote":  "https://github.com/EOkoyomon/wl_vs_rademacher.git",
++    "commit":  "012a453129bdb5dd55c98e91a6367a91f82e344c"
++  },
++  "email":  "caterina.graziani2@unisi.it",
++  "root":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher",
++  "host":  "MacBook-Air-di-Caterina.local",
++  "executable":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python",
++  "cpu_count":  10,
++  "cpu_count_logical":  10,
++  "disk":  {
++    "/":  {
++      "total":  "494384795648",
++      "used":  "151293243392"
++    }
++  },
++  "memory":  {
++    "total":  "17179869184"
++  },
++  "apple":  {
++    "name":  "Apple M4",
++    "ecpuCores":  6,
++    "pcpuCores":  4,
++    "gpuCores":  10,
++    "memoryGb":  16,
++    "ramTotalBytes":  "17179869184",
++    "macModel":  "Mac16,12"
++  },
++  "writerId":  "ap62h31t9c6t7yuowody7fqhfmd6p4c0"
++}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170127-9frunr6y/files/wandb-summary.json b/wandb/run-20260428_170127-9frunr6y/files/wandb-summary.json
+new file mode 100644
+index 0000000..29d515b
+--- /dev/null
++++ b/wandb/run-20260428_170127-9frunr6y/files/wandb-summary.json
+@@ -0,0 +1 @@
++{"test_acc":59,"_timestamp":1.777388503173961e+09,"R_s_upper_bound":0.22763339742787675,"R_s_lower_bound":0.16096111894578463,"gen_err_acc":-10.111111111111114,"gen_error_lower_bound":0.3829320926261732,"test_loss":1.9348104095458984,"gen_error_loss":0.4836402553982204,"gen_error_upper_bound":0.5162766495903575,"_step":64,"train_acc":48.888888888888886,"_wandb":{"runtime":14},"_runtime":14,"epoch":63,"train_loss":2.418450664944119}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170127-9frunr6y/run-9frunr6y.wandb b/wandb/run-20260428_170127-9frunr6y/run-9frunr6y.wandb
+new file mode 100644
+index 0000000..c8ed798
+Binary files /dev/null and b/wandb/run-20260428_170127-9frunr6y/run-9frunr6y.wandb differ
+diff --git a/wandb/run-20260428_170144-sx6wiq9p/files/code/run_perturb.py b/wandb/run-20260428_170144-sx6wiq9p/files/code/run_perturb.py
+new file mode 100644
+index 0000000..0d7203b
+--- /dev/null
++++ b/wandb/run-20260428_170144-sx6wiq9p/files/code/run_perturb.py
+@@ -0,0 +1,236 @@
++import csv
++import os.path as osp
++import random
++import wandb
++import argparse
++
++import numpy as np
++from torch.nn import BCEWithLogitsLoss
++import pandas as pd
++import torch
++import torch.nn.functional as F
++from torch_geometric.loader import DataLoader
++from torch_geometric.transforms import Compose
++
++from tqdm import tqdm
++from src.utils import OneHotNodeLabel, CalculateWLColors
++from src.net import Net, GCN
++from collections import defaultdict
++import networkx as nx
++import os
++from Synthetic_benchmarks import ParentClassificationDataset, RandomLabelMemorizationDataset
++
++batch_size = 16
++num_layers = [1, 2, 3, 4, 5, 6]
++lr = 0.0001
++epochs = 500
++lipschits_constant_loss = 1.0
++delta_prob = 0.95
++#seeds = [1, 2, 3, 4, 5] 
++num_reps = 5
++hd = 16
++early_stopping = 20
++
++
++def init_dataset(dataset_name, transforms, path, k):
++    if dataset_name == 'memo_all_pert':
++        # ### MEMORIZATION TASK 
++        k = int(k)
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
++    elif dataset_name == "memo_partial_pert":
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=3, rho=k)
++
++    ### PARENT CLASSIFICATION TASK
++    elif 'parent' in dataset_name:
++        parent_A = nx.random_regular_graph(3, 30, seed=0)
++        parent_B = nx.random_regular_graph(3, 30, seed=1)
++        parent_types = "regular_vs_regular"
++
++        root = os.path.join(path, 'parent_classification', parent_types)
++
++        if dataset_name == "parent_class_all":
++            k=int(k)
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
++        else:
++            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
++    else:
++        raise Exception("No valid dataset specified")
++
++    return dataset
++
++
++def main(args):
++    seed = args.seed
++    dataset_name = args.dataset
++    torch.manual_seed(seed)
++    random.seed(seed)
++    np.random.seed(seed)
++    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++    #device = torch.device('cpu')
++    print("Using device", device)
++
++
++    print("Loading dataset", dataset_name, end='... ')
++    root_path = osp.join(osp.dirname(osp.realpath(__file__)), "data" )
++
++    transform = Compose([CalculateWLColors(num_layers)])
++    dataset = init_dataset(dataset_name, transform, path=root_path, k=args.k).shuffle()
++
++
++    m = len(dataset) - (len(dataset) // 10)
++
++    for l in num_layers:
++        print("Number of layers:", l)
++        config = {
++            "delta_prob": delta_prob,
++            "lr": lr,
++            "num_layers": l,
++            "epochs": epochs,
++            "hidden_dimension": hd,
++            "early_stopping": early_stopping,
++            "batch_size": batch_size,
++            "dataset": dataset_name,
++            "k": args.k,
++            "seed": args.seed
++        }
++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++            dataset.shuffle()
++            p_dict = defaultdict(int)
++
++            for g in dataset[0:m]:
++                p_dict[g[f'wl_hash']] += 1
++
++            p_theory_upper_bound = 0.0
++            p_theory_lower_bound = 0.0
++
++            for c_j in p_dict.keys():
++                mu_j = p_dict[c_j]/m
++                p_theory_upper_bound += np.sqrt(mu_j/m)
++                p_theory_lower_bound += np.sqrt(mu_j /(2.0*m))
++
++            gen_err_upper_bound = 2.0 * lipschits_constant_loss * p_theory_upper_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++            gen_err_lower_bound = 2.0 * lipschits_constant_loss * p_theory_lower_bound + 3.0 * np.sqrt(np.log(2.0/delta_prob)/ (2.0*m))
++
++
++
++            train_dataset = dataset[0:m]
++            train_loader = DataLoader(train_dataset, batch_size, shuffle=True)
++
++            test_dataset = dataset[m:]
++            test_loader = DataLoader(test_dataset, batch_size)
++
++            # model = Net(dataset.num_features, hd, 1, l).to(device) # Binary
++            model = GCN(dataset.num_features, hd, 1, l).to(device) # Binary
++            print("Model params:", sum(p.numel() for p in model.parameters() if p.requires_grad))
++
++            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
++
++            def train():
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++                model.train()
++
++                total_loss = 0
++                for data in train_loader:
++                    data = data.to(device)
++                    optimizer.zero_grad()
++                    out = model(data.x, data.edge_index, data.batch)
++                    # print(out)
++                    labels = data.y.to(torch.float32).view(out.shape) # Convert data.y to float from int
++                    labels = (labels+1) / 2
++                    loss = loss_fn(out, labels) #population_risk(out, labels)
++                    loss.backward()
++                    optimizer.step()
++                    total_loss += float(loss) * data.num_graphs
++                return total_loss / len(train_loader.dataset)
++
++
++            @torch.no_grad()
++            def test(loader):
++                model.eval()
++                loss_fn = torch.nn.BCEWithLogitsLoss()
++
++                with torch.no_grad():
++                    total_correct = 0
++                    total_loss = 0
++                    for data in loader:
++                        data = data.to(device)
++                        pred = model(data.x, data.edge_index, data.batch)
++                        labels = data.y.to(torch.float32).view(pred.shape)
++                        labels = (labels+1) / 2
++                        loss = loss_fn(pred, labels)
++                        # pred = torch.argmax(pred, dim=1)
++                        pred = (pred.squeeze(-1) > 0.0).long()
++                        target = ((data.y.squeeze(-1) + 1) / 2).long()  # converts -1/1 → 0/1
++                        total_correct += int((pred == target).sum())
++                        total_loss += float(loss) * data.num_graphs
++                return total_correct / len(loader.dataset), total_loss / len(loader.dataset)
++            
++            last_best_train = 1000
++            epoch = 0
++            last_update_train = 0
++
++            for epoch in tqdm(range(epochs)):
++                loss = train()
++                train_acc, train_loss = test(train_loader)
++                test_acc, test_loss = test(test_loader)
++
++                train_acc *= 100.0
++                test_acc *= 100.0
++
++                is_early_stop = last_update_train >= early_stopping
++                if 100 - train_acc < 1e-2 or is_early_stop or epoch == epochs:
++                    print(f"Stopped at acc {train_acc} and ES {is_early_stop}")
++                    break
++
++                if loss < last_best_train:
++                    last_best_train = loss
++                    last_update_train = 0
++
++                last_update_train += 1
++                run.log({
++                    "epoch": epoch,
++                    "train_acc": train_acc,
++                    "test_acc": test_acc,
++                    "train_loss": train_loss,
++                    "test_loss": test_loss,
++                    "gen_error_loss": train_loss - test_loss,
++                    "gen_err_acc": train_acc - test_acc,
++
++                })
++
++            run.log({
++                "R_s_upper_bound": p_theory_upper_bound,
++                "R_s_lower_bound": p_theory_lower_bound,
++                "gen_error_upper_bound": gen_err_upper_bound,
++                "gen_error_lower_bound": gen_err_lower_bound,
++            })
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(
++        description="Argument parser for experiment configurations."
++    )
++
++    parser.add_argument(
++        "--seed",
++        type=int,
++        default=0,
++        help="Seed for RNG",
++    )
++    parser.add_argument(
++        "--dataset",
++        type=str,
++        required=True,
++        help="Dataset",
++        choices = ["memo_all_pert", "memo_partial_pert", "parent_class_all", "parent_class_partial"]
++    )
++    parser.add_argument(
++        "--k",
++        type=float,
++        required=True,
++        help="Dataset",
++    )
++
++    args = parser.parse_args()
++    main(args)
+diff --git a/wandb/run-20260428_170144-sx6wiq9p/files/config.yaml b/wandb/run-20260428_170144-sx6wiq9p/files/config.yaml
+new file mode 100644
+index 0000000..d2bab68
+--- /dev/null
++++ b/wandb/run-20260428_170144-sx6wiq9p/files/config.yaml
+@@ -0,0 +1,78 @@
++_wandb:
++    value:
++        cli_version: 0.26.1
++        code_path: code/run_perturb.py
++        e:
++            zoxq7f0n6em1va0xf8dcmg5l1z6zey60:
++                apple:
++                    ecpuCores: 6
++                    gpuCores: 10
++                    macModel: Mac16,12
++                    memoryGb: 16
++                    name: Apple M4
++                    pcpuCores: 4
++                    ramTotalBytes: "17179869184"
++                args:
++                    - --dataset
++                    - memo_partial_pert
++                    - --k
++                    - "0.2"
++                codePath: run_perturb.py
++                codePathLocal: run_perturb.py
++                cpu_count: 10
++                cpu_count_logical: 10
++                disk:
++                    /:
++                        total: "494384795648"
++                        used: "151295426560"
++                email: caterina.graziani2@unisi.it
++                executable: /Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python
++                git:
++                    commit: 012a453129bdb5dd55c98e91a6367a91f82e344c
++                    remote: https://github.com/EOkoyomon/wl_vs_rademacher.git
++                host: MacBook-Air-di-Caterina.local
++                memory:
++                    total: "17179869184"
++                os: macOS-15.5-arm64-arm-64bit
++                program: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py
++                python: CPython 3.9.6
++                root: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher
++                startedAt: "2026-04-28T15:01:44.786568Z"
++                writerId: zoxq7f0n6em1va0xf8dcmg5l1z6zey60
++        m: []
++        python_version: 3.9.6
++        t:
++            "1":
++                - 1
++                - 77
++            "2":
++                - 1
++                - 77
++            "3":
++                - 2
++                - 13
++                - 16
++            "4": 3.9.6
++            "5": 0.26.1
++            "12": 0.26.1
++            "13": darwin-arm64
++batch_size:
++    value: 16
++dataset:
++    value: memo_partial_pert
++delta_prob:
++    value: 0.95
++early_stopping:
++    value: 20
++epochs:
++    value: 500
++hidden_dimension:
++    value: 16
++k:
++    value: 0.2
++lr:
++    value: 0.0001
++num_layers:
++    value: 6
++seed:
++    value: 0
+diff --git a/wandb/run-20260428_170144-sx6wiq9p/files/diff.patch b/wandb/run-20260428_170144-sx6wiq9p/files/diff.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170144-sx6wiq9p/files/diff.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170144-sx6wiq9p/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch b/wandb/run-20260428_170144-sx6wiq9p/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+new file mode 100644
+index 0000000..05abb73
+--- /dev/null
++++ b/wandb/run-20260428_170144-sx6wiq9p/files/diff_012a453129bdb5dd55c98e91a6367a91f82e344c.patch
+@@ -0,0 +1,14 @@
++diff --git a/run_perturb.py b/run_perturb.py
++index 9959c4a..0d7203b 100644
++--- a/run_perturb.py
+++++ b/run_perturb.py
++@@ -93,7 +93,8 @@ def main(args):
++             "k": args.k,
++             "seed": args.seed
++         }
++-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
+++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
++             dataset.shuffle()
++             p_dict = defaultdict(int)
++ 
+diff --git a/wandb/run-20260428_170144-sx6wiq9p/files/requirements.txt b/wandb/run-20260428_170144-sx6wiq9p/files/requirements.txt
+new file mode 100644
+index 0000000..734859c
+--- /dev/null
++++ b/wandb/run-20260428_170144-sx6wiq9p/files/requirements.txt
+@@ -0,0 +1,58 @@
++async-timeout==5.0.1
++requests==2.32.5
++psutil==7.2.1
++aiohttp==3.13.3
++tzdata==2026.2
++GitPython==3.1.48
++matplotlib==3.9.4
++certifi==2026.1.4
++sentry-sdk==2.58.0
++platformdirs==4.4.0
++propcache==0.4.1
++torch==2.8.0
++filelock==3.19.1
++pip==25.3
++multidict==6.7.0
++idna==3.11
++tqdm==4.67.1
++click==8.1.8
++numpy==2.0.2
++fsspec==2025.10.0
++pydantic_core==2.46.3
++charset-normalizer==3.4.4
++sympy==1.14.0
++kiwisolver==1.4.7
++eval_type_backport==0.3.1
++wandb==0.26.1
++torch-geometric==2.6.1
++contourpy==1.3.0
++pytz==2026.1.post1
++protobuf==6.33.6
++gitdb==4.0.12
++smmap==5.0.3
++python-dateutil==2.9.0.post0
++mpmath==1.3.0
++PyYAML==6.0.3
++fonttools==4.60.2
++urllib3==2.6.3
++frozenlist==1.8.0
++pydantic==2.13.3
++typing_extensions==4.15.0
++aiosignal==1.4.0
++packaging==25.0
++cycler==0.12.1
++Jinja2==3.1.6
++pyparsing==3.3.2
++pandas==2.3.3
++MarkupSafe==3.0.3
++aiohappyeyeballs==2.6.1
++attrs==25.4.0
++networkx==3.2.1
++pillow==11.3.0
++typing-inspection==0.4.2
++zipp==3.23.0
++annotated-types==0.7.0
++setuptools==58.0.4
++six==1.17.0
++yarl==1.22.0
++importlib_resources==6.5.2
+diff --git a/wandb/run-20260428_170144-sx6wiq9p/files/wandb-metadata.json b/wandb/run-20260428_170144-sx6wiq9p/files/wandb-metadata.json
+new file mode 100644
+index 0000000..3da6de9
+--- /dev/null
++++ b/wandb/run-20260428_170144-sx6wiq9p/files/wandb-metadata.json
+@@ -0,0 +1,43 @@
++{
++  "os":  "macOS-15.5-arm64-arm-64bit",
++  "python":  "CPython 3.9.6",
++  "startedAt":  "2026-04-28T15:01:44.786568Z",
++  "args":  [
++    "--dataset",
++    "memo_partial_pert",
++    "--k",
++    "0.2"
++  ],
++  "program":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py",
++  "codePath":  "run_perturb.py",
++  "codePathLocal":  "run_perturb.py",
++  "git":  {
++    "remote":  "https://github.com/EOkoyomon/wl_vs_rademacher.git",
++    "commit":  "012a453129bdb5dd55c98e91a6367a91f82e344c"
++  },
++  "email":  "caterina.graziani2@unisi.it",
++  "root":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher",
++  "host":  "MacBook-Air-di-Caterina.local",
++  "executable":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python",
++  "cpu_count":  10,
++  "cpu_count_logical":  10,
++  "disk":  {
++    "/":  {
++      "total":  "494384795648",
++      "used":  "151295426560"
++    }
++  },
++  "memory":  {
++    "total":  "17179869184"
++  },
++  "apple":  {
++    "name":  "Apple M4",
++    "ecpuCores":  6,
++    "pcpuCores":  4,
++    "gpuCores":  10,
++    "memoryGb":  16,
++    "ramTotalBytes":  "17179869184",
++    "macModel":  "Mac16,12"
++  },
++  "writerId":  "zoxq7f0n6em1va0xf8dcmg5l1z6zey60"
++}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170144-sx6wiq9p/files/wandb-summary.json b/wandb/run-20260428_170144-sx6wiq9p/files/wandb-summary.json
+new file mode 100644
+index 0000000..b2c5224
+--- /dev/null
++++ b/wandb/run-20260428_170144-sx6wiq9p/files/wandb-summary.json
+@@ -0,0 +1 @@
++{"_timestamp":1.7773885299456892e+09,"R_s_lower_bound":0.16096111894578463,"gen_error_lower_bound":0.3829320926261732,"test_loss":4.719613265991211,"epoch":90,"_runtime":24,"test_acc":45,"gen_err_acc":5.333333333333329,"train_loss":4.227544294993082,"_wandb":{"runtime":24},"_step":91,"train_acc":50.33333333333333,"gen_error_loss":-0.49206897099812874,"R_s_upper_bound":0.22763339742787675,"gen_error_upper_bound":0.5162766495903575}
+\ No newline at end of file
+diff --git a/wandb/run-20260428_170144-sx6wiq9p/run-sx6wiq9p.wandb b/wandb/run-20260428_170144-sx6wiq9p/run-sx6wiq9p.wandb
+new file mode 100644
+index 0000000..f69b484
+Binary files /dev/null and b/wandb/run-20260428_170144-sx6wiq9p/run-sx6wiq9p.wandb differ
