@@ -1,0 +1,78 @@
+_wandb:
+    value:
+        cli_version: 0.26.1
+        code_path: code/run_perturb.py
+        e:
+            din69an9m1qvocofpleymm8n3x0b2lb3:
+                apple:
+                    ecpuCores: 6
+                    gpuCores: 10
+                    macModel: Mac16,12
+                    memoryGb: 16
+                    name: Apple M4
+                    pcpuCores: 4
+                    ramTotalBytes: "17179869184"
+                args:
+                    - --dataset
+                    - memo_partial_pert
+                    - --k
+                    - "0.2"
+                codePath: run_perturb.py
+                codePathLocal: run_perturb.py
+                cpu_count: 10
+                cpu_count_logical: 10
+                disk:
+                    /:
+                        total: "494384795648"
+                        used: "151297163264"
+                email: caterina.graziani2@unisi.it
+                executable: /Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python
+                git:
+                    commit: 012a453129bdb5dd55c98e91a6367a91f82e344c
+                    remote: https://github.com/EOkoyomon/wl_vs_rademacher.git
+                host: MacBook-Air-di-Caterina.local
+                memory:
+                    total: "17179869184"
+                os: macOS-15.5-arm64-arm-64bit
+                program: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py
+                python: CPython 3.9.6
+                root: /Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher
+                startedAt: "2026-04-28T15:01:05.326289Z"
+                writerId: din69an9m1qvocofpleymm8n3x0b2lb3
+        m: []
+        python_version: 3.9.6
+        t:
+            "1":
+                - 1
+                - 77
+            "2":
+                - 1
+                - 77
+            "3":
+                - 2
+                - 13
+                - 16
+            "4": 3.9.6
+            "5": 0.26.1
+            "12": 0.26.1
+            "13": darwin-arm64
+batch_size:
+    value: 16
+dataset:
+    value: memo_partial_pert
+delta_prob:
+    value: 0.95
+early_stopping:
+    value: 20
+epochs:
+    value: 500
+hidden_dimension:
+    value: 16
+k:
+    value: 0.2
+lr:
+    value: 0.0001
+num_layers:
+    value: 3
+seed:
+    value: 0

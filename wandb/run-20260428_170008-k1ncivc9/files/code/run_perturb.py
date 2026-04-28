@@ -29,16 +29,16 @@ delta_prob = 0.95
 #seeds = [1, 2, 3, 4, 5] 
 num_reps = 5
 hd = 16
-early_stopping = 20 
+early_stopping = 20
 
 
-def init_dataset(dataset_name, transforms, path, k, rho=1.0):
-    k = int(k)
+def init_dataset(dataset_name, transforms, path, k):
     if dataset_name == 'memo_all_pert':
         # ### MEMORIZATION TASK 
+        k = int(k)
         dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
     elif dataset_name == "memo_partial_pert":
-        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=k, rho=rho)
+        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=3, rho=k)
 
     ### PARENT CLASSIFICATION TASK
     elif 'parent' in dataset_name:
@@ -52,7 +52,7 @@ def init_dataset(dataset_name, transforms, path, k, rho=1.0):
             k=int(k)
             dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
         else:
-            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=k, rho=rho)
+            dataset = ParentClassificationDataset(root=root, pre_transform=transforms, num_graphs_per_class=1000, parent_A=parent_A, parent_B=parent_B, regime='fraction', K=3, rho=k)
     else:
         raise Exception("No valid dataset specified")
 
@@ -91,11 +91,10 @@ def main(args):
             "batch_size": batch_size,
             "dataset": dataset_name,
             "k": args.k,
-            "rho": args.rho,
             "seed": args.seed
         }
-        run_name = f"GCN_{dataset_name}_k{args.k}_rho{args.rho}_L{l}"
-        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config, mode="disabled") as run: #, mode="disabled"
+        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
+        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
             dataset.shuffle()
             p_dict = defaultdict(int)
 
@@ -228,15 +227,10 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         "--k",
-        type=int,
-        required=True,
-        help="Number of nodes/edges perturbed per graph"
-    )
-    parser.add_argument(
-        "--rho",
         type=float,
-        default=1.0,
-        help="Fraction of samples perturbed in the dataset"
+        required=True,
+        help="Dataset",
     )
+
     args = parser.parse_args()
     main(args)

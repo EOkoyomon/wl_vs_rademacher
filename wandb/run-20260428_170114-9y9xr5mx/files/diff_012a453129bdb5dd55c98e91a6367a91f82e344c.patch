@@ -1,0 +1,14 @@
+diff --git a/run_perturb.py b/run_perturb.py
+index 9959c4a..0d7203b 100644
+--- a/run_perturb.py
++++ b/run_perturb.py
+@@ -93,7 +93,8 @@ def main(args):
+             "k": args.k,
+             "seed": args.seed
+         }
+-        with wandb.init(name="GCN", project="wl_perturb", entity="wl_meet_rad", config=config) as run:
++        run_name = f"GCN_{dataset_name}_k{args.k}_L{l}"
++        with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
+             dataset.shuffle()
+             p_dict = defaultdict(int)
+ 
