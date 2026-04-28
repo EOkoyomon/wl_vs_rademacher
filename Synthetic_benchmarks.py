@@ -316,7 +316,7 @@ if __name__ == "__main__":
     parent_types = "regular_vs_regular"
 
 
-    root = os.path.join('./data/parent_classification', parents_string)
+    root = os.path.join('./data/parent_classification', parent_types)
 
     for k in [0, 1, 3, 5]:
         dataset = ParentClassificationDataset(root=root, parent_A=parent_A, parent_B=parent_B, regime='all', K=k)
