@@ -137,7 +137,9 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
             data.K = torch.tensor([self.K], dtype=torch.long) 
             data.rho = torch.tensor([self.rho], dtype=torch.float)
             data.wl_hash = h # Save the WL hash as a string attribute (not a tensor)
-            
+
+            if self.pre_transform is not None:
+                data = self.pre_transform(data)
             data_list.append(data)
             
         # print wl statistics for this K
@@ -238,6 +240,9 @@ class ParentClassificationDataset(InMemoryDataset):
             data.K = torch.tensor([self.K], dtype=torch.long) 
             data.rho = torch.tensor([self.rho], dtype=torch.float)
             data.wl_hash = h # Save the WL hash as a string attribute (not a tensor)
+
+            if self.pre_transform is not None:
+                data = self.pre_transform(data)
             data_list.append(data)
 
 ### Generation of children graphs by perturbing B, class -1
@@ -255,6 +260,8 @@ class ParentClassificationDataset(InMemoryDataset):
             data.K = torch.tensor([self.K], dtype=torch.long) 
             data.rho = torch.tensor([self.rho], dtype=torch.float)
             data.wl_hash = h # Save the WL hash as a string attribute (not a tensor)
+            if self.pre_transform is not None:
+                data = self.pre_transform(data)
             data_list.append(data)
             
         random.shuffle(data_list)
