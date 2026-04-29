@@ -96,7 +96,7 @@ def main(args):
         }
         run_name = f"GCN_{dataset_name}_k{args.k}_rho{args.rho}_L{l}"
         with wandb.init(name=run_name, project="wl_perturb", entity="wl_meet_rad", config=config) as run: #, mode="disabled"
-            dataset.shuffle()
+            #dataset.shuffle()
             p_dict = defaultdict(int)
 
             for g in dataset[0:m]:
@@ -187,8 +187,8 @@ def main(args):
                 if loss < last_best_train:
                     last_best_train = loss
                     last_update_train = 0
-
-                last_update_train += 1
+                else:
+                    last_update_train += 1
                 run.log({
                     "epoch": epoch,
                     "train_acc": train_acc,
