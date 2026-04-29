@@ -1,1 +1,0 @@
-{"_step":163,"_runtime":58,"_wandb":{"runtime":58},"gen_err_acc":3.3333333333333286,"epoch":163,"test_loss":633.4270483398437,"train_loss":593.5888652886284,"test_acc":47,"_timestamp":1.7774591909981499e+09,"gen_error_loss":-39.83818305121531,"train_acc":50.33333333333333}

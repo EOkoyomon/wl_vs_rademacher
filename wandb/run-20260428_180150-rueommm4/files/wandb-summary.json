@@ -1,1 +1,0 @@
-{"_wandb":{"runtime":25},"_step":114,"R_s_lower_bound":0.5784951629544229,"R_s_upper_bound":0.8181157052173771,"_runtime":25,"test_acc":50,"gen_error_loss":0.20968668407864044,"_timestamp":1.777392137022084e+09,"train_loss":8.75913103527493,"gen_err_acc":0,"gen_error_upper_bound":1.6972412651693582,"epoch":113,"test_loss":8.54944435119629,"train_acc":50}

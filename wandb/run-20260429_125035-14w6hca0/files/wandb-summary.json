@@ -1,1 +1,0 @@
-{"R_s_lower_bound":0.7071067811865326,"_runtime":109,"test_loss":0.7499052238464355,"R_s_upper_bound":0.9999999999999684,"gen_error_upper_bound":2.043140482001981,"_timestamp":1.7774599461401012e+09,"gen_error_loss":-0.019009649488661018,"epoch":380,"train_loss":0.7308955743577745,"_step":381,"_wandb":{"runtime":109},"train_acc":51,"gen_err_acc":6.5,"test_acc":44.5}
