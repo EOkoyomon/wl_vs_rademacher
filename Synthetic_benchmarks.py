@@ -131,6 +131,9 @@ class RandomLabelMemorizationDataset(InMemoryDataset):
             
             data = from_networkx(G_p)
             data.x = torch.ones((data.num_nodes, 1)) # Feature all 1
+            # graph_id = torch.zeros(self.num_graphs)
+            # graph_id[i] = 1.0
+            # data.x = graph_id.repeat(data.num_nodes, 1) # Unique identifier for each graph as node features
             data.y = torch.tensor([targets[i]], dtype=torch.long) # Label 
             
             # Metadata saved in the graph data object
@@ -309,9 +312,9 @@ class ParentClassificationDataset(InMemoryDataset):
 
 if __name__ == "__main__":
    
-    # ### MEMORIZATION TASK 
-    # for k in [0, 1, 2, 3, 4, 5]:
-    #     dataset = RandomLabelMemorizationDataset(root='./data/memorization', regime='all', K=k)
+    ### MEMORIZATION TASK 
+    for k in [0, 2, 5]:
+        dataset = RandomLabelMemorizationDataset(root='./data/memorization', regime='all', K=k, num_graphs=20)
 
     # for r in [0.1, 0.2, 0.4, 0.6, 0.8, 1.0]:
     #     dataset = RandomLabelMemorizationDataset(root='./data/memorization', regime='fraction', K=3, rho=r)

@@ -1,0 +1,9 @@
+diff --git a/wandb/latest-run b/wandb/latest-run
+index 8955b7f..f97191b 120000
+--- a/wandb/latest-run
++++ b/wandb/latest-run
+@@ -1 +1 @@
+-run-20260428_174304-apuli11j
+\ No newline at end of file
++run-20260428_180729-a7loapks
+\ No newline at end of file

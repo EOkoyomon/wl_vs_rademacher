@@ -1,0 +1,54 @@
+diff --git a/Synthetic_benchmarks.py b/Synthetic_benchmarks.py
+index e3c9848..54edfb4 100644
+--- a/Synthetic_benchmarks.py
++++ b/Synthetic_benchmarks.py
+@@ -309,9 +309,9 @@ class ParentClassificationDataset(InMemoryDataset):
+ 
+ if __name__ == "__main__":
+    
+-    # ### MEMORIZATION TASK 
+-    # for k in [0, 1, 2, 3, 4, 5]:
+-    #     dataset = RandomLabelMemorizationDataset(root='./data/memorization', regime='all', K=k)
++    ### MEMORIZATION TASK 
++    for k in [0, 2, 5]:
++        dataset = RandomLabelMemorizationDataset(root='./data/memorization', regime='all', K=k, num_graphs=20)
+ 
+     # for r in [0.1, 0.2, 0.4, 0.6, 0.8, 1.0]:
+     #     dataset = RandomLabelMemorizationDataset(root='./data/memorization', regime='fraction', K=3, rho=r)
+diff --git a/run_perturb.py b/run_perturb.py
+index 69bed32..258a3b2 100644
+--- a/run_perturb.py
++++ b/run_perturb.py
+@@ -23,20 +23,20 @@ from Synthetic_benchmarks import ParentClassificationDataset, RandomLabelMemoriz
+ batch_size = 16
+ num_layers = [1, 2, 3, 4, 5, 6]
+ lr = 0.0001
+-epochs = 500
++epochs = 1000
+ lipschits_constant_loss = 1.0
+ delta_prob = 0.95
+ #seeds = [1, 2, 3, 4, 5] 
+ num_reps = 5
+ hd = 16
+-early_stopping = 20 
++early_stopping = epochs 
+ 
+ 
+ def init_dataset(dataset_name, transforms, path, k, rho=1.0):
+     k = int(k)
+     if dataset_name == 'memo_all_pert':
+         # ### MEMORIZATION TASK 
+-        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='all', K=k)
++        dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=20, pre_transform=transforms, regime='all', K=k)
+     elif dataset_name == "memo_partial_pert":
+         dataset = RandomLabelMemorizationDataset(root=os.path.join(path, 'memorization'), num_graphs=1000, pre_transform=transforms, regime='fraction', K=k, rho=rho)
+ 
+diff --git a/wandb/latest-run b/wandb/latest-run
+index 8955b7f..d2a1bbe 120000
+--- a/wandb/latest-run
++++ b/wandb/latest-run
+@@ -1 +1 @@
+-run-20260428_174304-apuli11j
+\ No newline at end of file
++run-20260429_114116-q0uevwo3
+\ No newline at end of file

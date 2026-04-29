@@ -1,0 +1,47 @@
+{
+  "os":  "macOS-15.5-arm64-arm-64bit",
+  "python":  "CPython 3.9.6",
+  "startedAt":  "2026-04-28T16:01:15.739077Z",
+  "args":  [
+    "--dataset",
+    "memo_partial_pert",
+    "--k",
+    "5",
+    "--rho",
+    "0.8",
+    "--seed",
+    "41"
+  ],
+  "program":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher/run_perturb.py",
+  "codePath":  "run_perturb.py",
+  "codePathLocal":  "run_perturb.py",
+  "git":  {
+    "remote":  "https://github.com/EOkoyomon/wl_vs_rademacher.git",
+    "commit":  "de5033e21dacb4439fecaad1f414065885260432"
+  },
+  "email":  "caterina.graziani2@unisi.it",
+  "root":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/wl_vs_rademacher",
+  "host":  "MacBook-Air-di-Caterina.local",
+  "executable":  "/Users/caterinagraziani/Desktop/Lavoro/RAD/.venv/bin/python",
+  "cpu_count":  10,
+  "cpu_count_logical":  10,
+  "disk":  {
+    "/":  {
+      "total":  "494384795648",
+      "used":  "151329964032"
+    }
+  },
+  "memory":  {
+    "total":  "17179869184"
+  },
+  "apple":  {
+    "name":  "Apple M4",
+    "ecpuCores":  6,
+    "pcpuCores":  4,
+    "gpuCores":  10,
+    "memoryGb":  16,
+    "ramTotalBytes":  "17179869184",
+    "macModel":  "Mac16,12"
+  },
+  "writerId":  "8oj9gzknhphg93zzrdwcrzn6f8dheb5c"
+}
