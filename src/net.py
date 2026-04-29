@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.nn import Linear, global_mean_pool, GraphConv, GCNConv, MLP, global_add_pool
+from torch_geometric.nn import Linear, global_mean_pool, GraphConv, GCNConv, MLP, global_add_pool, GINConv
 from torch_geometric.utils import scatter
 
 class Net(torch.nn.Module):
@@ -99,4 +99,30 @@ class GCN(torch.nn.Module):
         return h
             
 
+
+class GIN(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers):
+        super().__init__()
+        self.convs = torch.nn.ModuleList()
+        
+        for i in range(num_layers):
+            mlp = torch.nn.Sequential(
+                torch.nn.Linear(in_channels if i == 0 else hidden_channels, hidden_channels),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden_channels, hidden_channels),
+                torch.nn.ReLU()
+            )
+            self.convs.append(GINConv(mlp, train_eps=True)) 
+
+        self.readout = torch.nn.Linear(hidden_channels, out_channels)
+
+    def forward(self, x, edge_index, batch):
+        h = x
+        for conv in self.convs:
+            h = conv(h, edge_index)
+            h = torch.relu(h)
+
+        h = global_add_pool(h, batch) 
+        
+        return self.readout(h)
 
