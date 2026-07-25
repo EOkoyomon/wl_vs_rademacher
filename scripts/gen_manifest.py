@@ -13,7 +13,7 @@ for m in M_VALUES:
             data_seed, mc_seed = 1000 + rep, 2000 + rep
             lines.append(
                 f"uv run --extra cu130 exp_prop_2.py --data-seed {data_seed} --mc-seed {mc_seed} "
-                f"--m {m} --q {q} {FIXED} > results/m{m}_p{p}_seed{rep}.log 2>&1"
+                f"--m {m} --q {q} {FIXED}"
             )
 
 with open("jobs.txt", "w") as f:
