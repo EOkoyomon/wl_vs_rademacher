@@ -21,6 +21,7 @@ def parse_args():
     p.add_argument("--num-layers", type=int, default=2)
     p.add_argument("--wl-iterations", type=int, default=2, help="should be >= num_layers (see Xu et al.)")
     p.add_argument("--activation", type=str, default="relu", help="Choose relu or leaky_relu")
+    p.add_argument("--dropout", type=float, default=0.0, help="dropout prob inside each GIN MLP (default 0: off)")
     p.add_argument("--K", type=int, default=20, help="number of Rademacher sigma draws")
     p.add_argument("--epochs", type=int, default=150, help="Adam steps per (draw, restart)")
     p.add_argument("--lr", type=float, default=0.05)
@@ -32,7 +33,7 @@ def parse_args():
     return p.parse_args()
 
 
-def estimate_rademacher(dataset, K: int, hidden_channels:int, num_layers:int, activation: str = 'relu', restarts: int = 2, epochs: int = 150, lr: float = 0.05, device: str = "cpu", seed: int = 42, grad_clip: bool = False):
+def estimate_rademacher(dataset, K: int, hidden_channels:int, num_layers:int, activation: str = 'relu', restarts: int = 2, epochs: int = 150, lr: float = 0.05, device: str = "cpu", seed: int = 42, grad_clip: bool = False, dropout: float = 0.0):
     torch.manual_seed(seed)
     random.seed(seed)
     m = len(dataset)
@@ -49,11 +50,12 @@ def estimate_rademacher(dataset, K: int, hidden_channels:int, num_layers:int, ac
         for _ in range(restarts):
             model = GIN(
                     hidden_channels=hidden_channels, num_layers=num_layers,
-                    activation=activation
+                    activation=activation, dropout=dropout
             ).to(device=device)
             opt = torch.optim.Adam(model.parameters(), lr=lr)
             best_per_k = -1e9
             for _ in range(epochs):
+                model.train()
                 opt.zero_grad()
                 preds = model.forward_batch(dataset)
                 # # Our loss is basically the Rad
@@ -69,6 +71,7 @@ def estimate_rademacher(dataset, K: int, hidden_channels:int, num_layers:int, ac
                 if grad_clip is not None:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 opt.step()
+                model.eval()
                 with torch.no_grad():
                     y_hat = torch.nn.functional.sigmoid(model.forward_batch(dataset)) > 0.5
                     acc = (y01.bool() == y_hat).sum().float().item() / len(dataset)
@@ -111,8 +114,8 @@ def main():
         dataset=torch_graphs, hidden_channels=args.hidden_channels,
         num_layers=args.num_layers,
         activation=args.activation,
-        K=K, restarts=args.restarts, epochs=args.epochs, 
-        lr=args.lr, device=device, seed=mc_seed
+        K=K, restarts=args.restarts, epochs=args.epochs,
+        lr=args.lr, device=device, seed=mc_seed, dropout=args.dropout
     )
 
     mc_std = float(torch.tensor(vals).std().item()) if len(vals) > 1 else 0.0
@@ -121,7 +124,7 @@ def main():
     row = dict(
         p=p, q=q, prop=args.prop, n=n, d=d, m=m, K=args.K,
         dataset_seed=args.data_seed, mc_seed=args.mc_seed,
-        hidden_dim=args.hidden_channels, num_layers=args.num_layers, wl_iterations=args.wl_iterations,
+        hidden_dim=args.hidden_channels, num_layers=args.num_layers, wl_iterations=args.wl_iterations, dropout=args.dropout,
         epochs=args.epochs, lr=args.lr, restarts=args.restarts,
         lower_rad=lower_rad, upper_rad=upper_rad, exact_rad=exact_rad, mc_estimate=mc_rad, mc_std=mc_std,
         in_band=in_band, device=device,

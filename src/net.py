@@ -101,18 +101,19 @@ class GCN(torch.nn.Module):
 
 
 class GIN(torch.nn.Module):
-    def __init__(self, hidden_channels, num_layers, mlp_hidden=None, activation="relu"):
+    def __init__(self, hidden_channels, num_layers, mlp_hidden=None, activation="relu", dropout=0.0):
         super().__init__()
         mlp_hidden = mlp_hidden or hidden_channels
         self.activation = activation
         act_layer = torch.nn.LeakyReLU(0.1) if activation =="leaky_relu" else torch.nn.ReLU()
         self.eps = torch.nn.ParameterList([torch.nn.Parameter(torch.zeros(1)) for _ in range(num_layers)])
         self.convs = torch.nn.ModuleList()
-        
+
         for i in range(num_layers):
             mlp = torch.nn.Sequential(
                 torch.nn.Linear(1 if i == 0 else hidden_channels, hidden_channels),
                 act_layer,
+                torch.nn.Dropout(dropout),
                 torch.nn.Linear(hidden_channels, hidden_channels),
             )
             self.convs.append(mlp)
