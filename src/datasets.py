@@ -25,5 +25,5 @@ def sample_dataset_regular_mixed(m: int, n: int, d: int, q: int, seed: int):
         if i < (m-q):
             graphs.append(regular.copy())
         else:
-            graphs.append(sample_erdos_renyi(n, d,rng.randrange(2**31)))
+            graphs.append(sample_erdos_renyi(n, 0.4, rng.randrange(2**31)))
     return graphs

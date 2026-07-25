@@ -118,5 +118,11 @@ def main():
     )
     print(row)
 
+    if args.wandb:
+        import wandb
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=vars(args))
+        wandb.log(row)
+        wandb.finish()
+
 if __name__ == "__main__":
     main()
