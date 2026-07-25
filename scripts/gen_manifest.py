@@ -14,7 +14,7 @@ for m in M_VALUES:
             for rep in range(SEEDS):
                 data_seed, mc_seed = 1000 + rep, 2000 + rep
                 lines.append(
-                    f"uv run --extra cu130 exp_prop_2.py --num--layers {n_layers} --data-seed {data_seed} --mc-seed {mc_seed} "
+                    f"uv run --extra cu130 exp_prop_2.py --num-layers {n_layers} --data-seed {data_seed} --mc-seed {mc_seed} "
                     f"--m {m} --q {q} {FIXED}"
                 )
 
