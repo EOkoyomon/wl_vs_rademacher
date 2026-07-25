@@ -4,7 +4,7 @@ N_LAYERS = [1]
 HIDDEN_CHANNELS = [8, 16, 32]
 PROP_VALUES = [0.01, 0.05, 0.1, 0.2]  # proportion of m per q class
 SEEDS = 1
-FIXED = "--n 12 --d 3 --wl-iterations 3 --K 100 --epochs 50 --lr 0.05 --restarts 10 --device cuda --activation leaky_relu --wandb"
+FIXED = "--n 12 --d 3 --wl-iterations 3 --K 100 --epochs 100 --lr 0.05 --restarts 10 --device cuda --activation leaky_relu --wandb"
 
 lines = []
 for m in M_VALUES:
