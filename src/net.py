@@ -139,10 +139,24 @@ class GIN(torch.nn.Module):
     def forward(self, A):
         return torch.tanh(self.logits(A))
 
-    def forward_batch(self, As):
-        return torch.stack([self.forward(A) for A in As])
+    def embedding_batch(self, As):
+        """Same computation as embedding(), but for a whole batch of
+        same-size graphs at once via torch.bmm -- one vectorized GPU call
+        per layer instead of a Python loop over individual graphs (which
+        is dominated by per-call kernel-launch overhead for tiny graphs)."""
+        A = torch.stack(As) if isinstance(As, (list, tuple)) else As  # (B, n, n)
+        B, n, _ = A.shape
+        h = torch.ones(B, n, 1, dtype=A.dtype, device=A.device)
+        for eps, mlp in zip(self.eps, self.convs):
+            agg = torch.bmm(A, h)
+            combined = (1.0 + eps) * h + agg
+            h = self._act(mlp(combined))
+        return h.sum(dim=1)
 
     def logits_batch(self, As):
-        return torch.stack([self.logits(A) for A in As])
+        return self.beta(self.embedding_batch(As)).squeeze(-1)
+
+    def forward_batch(self, As):
+        return torch.tanh(self.logits_batch(As))
 
 
