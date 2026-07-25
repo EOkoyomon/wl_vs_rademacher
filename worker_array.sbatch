@@ -12,6 +12,11 @@
 source  ./.venv/bin/activate
 
 set -euo pipefail
+set -a
+source .env
+set +a
+
 cmd=$(sed -n "${SLURM_ARRAY_TASK_ID}p" jobs.txt)
+cmd="$cmd --wandb-project \"$WANDB_PROJECT\" --wandb-entity \"$WANDB_ENTITY\""
 echo "Running: $cmd"
 eval "$cmd"
