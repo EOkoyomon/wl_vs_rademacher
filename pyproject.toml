@@ -12,18 +12,18 @@ dependencies = [
 ]
 [project.optional-dependencies]
 cpu = [
-    "torch==2.9.0+cpu",
+    "torch==2.11.0+cpu",
     "torch-geometric",
-    "pyg-lib==0.6.0+pt29cpu",
-    "torch-sparse==0.6.18+pt29cpu",
-    "torch-scatter==2.1.2+pt29cpu",
+    "pyg-lib==0.6.0+pt211cpu",
+    "torch-sparse==0.6.18+pt211cpu",
+    "torch-scatter==2.1.2+pt211cpu",
 ]
 cu130 = [
-    "torch==2.9.0+cu130",
+    "torch==2.11.0+cu130",
     "torch-geometric",
-    "pyg-lib==0.6.0+pt29cu130",
-    "torch-sparse==0.6.18+pt29cu130",
-    "torch-scatter==2.1.2+pt29cu130",
+    "pyg-lib==0.6.0+pt211cu130",
+    "torch-sparse==0.6.18+pt211cu130",
+    "torch-scatter==2.1.2+pt211cu130",
 ]
 
 [tool.uv]
@@ -42,13 +42,13 @@ explicit = true
 
 [[tool.uv.index]]
 name = "pyg-cuda" 
-url = "https://data.pyg.org/whl/torch-2.9.0+cu130.html"
+url = "https://data.pyg.org/whl/torch-2.11.0+cu130.html"
 explicit = true
 format = "flat"
 
 [[tool.uv.index]]
 name = "pyg-cpu" 
-url = "https://data.pyg.org/whl/torch-2.9.0+cpu.html"
+url = "https://data.pyg.org/whl/torch-2.11.0+cpu.html"
 explicit = true
 format = "flat"
 

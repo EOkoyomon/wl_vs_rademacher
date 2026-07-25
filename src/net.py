@@ -101,28 +101,48 @@ class GCN(torch.nn.Module):
 
 
 class GIN(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, num_layers):
+    def __init__(self, hidden_channels, num_layers, mlp_hidden=None, activation="relu"):
         super().__init__()
+        mlp_hidden = mlp_hidden or hidden_channels
+        self.activation = activation
+        act_layer = torch.nn.LeakyReLU(0.1) if activation =="leaky_relu" else torch.nn.ReLU()
+        self.eps = torch.nn.ParameterList([torch.nn.Parameter(torch.zeros(1)) for _ in range(num_layers)])
         self.convs = torch.nn.ModuleList()
         
         for i in range(num_layers):
             mlp = torch.nn.Sequential(
-                torch.nn.Linear(in_channels if i == 0 else hidden_channels, hidden_channels),
-                torch.nn.ReLU(),
+                torch.nn.Linear(1 if i == 0 else hidden_channels, hidden_channels),
+                act_layer,
                 torch.nn.Linear(hidden_channels, hidden_channels),
-                torch.nn.ReLU()
             )
-            self.convs.append(GINConv(mlp, train_eps=True)) 
+            self.convs.append(mlp)
+        self.beta = torch.nn.Linear(hidden_channels, 1, bias=False)
 
-        self.readout = torch.nn.Linear(hidden_channels, out_channels)
+    def _act(self, x):
+        if self.activation == "leaky_relu":
+            return torch.nn.functional.leaky_relu(x, 0.1)
+        else:
+            return torch.relu(x)
 
-    def forward(self, x, edge_index, batch):
-        h = x
-        for conv in self.convs:
-            h = conv(h, edge_index)
-            h = torch.relu(h)
+    def embedding(self, A):
+        n = A.shape[0]
+        h = torch.ones(n, 1, dtype=A.dtype, device=A.device)
+        for eps, mlp in zip(self.eps, self.convs):
+            agg = A @ h
+            combined = (1.0 + eps) * h + agg
+            h = self._act(mlp(combined))
+        return h.sum(dim=0)
 
-        h = global_add_pool(h, batch) 
-        
-        return self.readout(h)
+    def logits(self, A):
+        return self.beta(self.embedding(A)).squeeze()
+
+    def forward(self, A):
+        return torch.tanh(self.logits(A))
+
+    def forward_batch(self, As):
+        return torch.stack([self.forward(A) for A in As])
+
+    def logits_batch(self, As):
+        return torch.stack([self.logits(A) for A in As])
+
 

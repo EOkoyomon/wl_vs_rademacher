@@ -7,30 +7,35 @@ In these experiments, we empirically evaluate the generalization bounds and gene
 
 ## Quick Start
 
-To set up the environment and run the experiments, you can use the provided configuration files:
+To set up the environment and run the experiments:
 
 ```bash
-# Using Conda
-conda env create -f environment.yml
-conda activate wl_meets_rc
+# Using uv
 
-# Using Pip
-pip install -r requirements.txt
+# CPU
+uv sync --extra cpu
+# GPU
+uv sync --extra cu130
 
 ```
-
 
 ## Basic Usage
 
-The main entry point for the experiments is `run_experiment.py`. This script handles data fetching via PyTorch Geometric's `TUDataset` interface, model initialization, and the training/evaluation loop.
+We test the following theoretical results
+## Prop 2 - Upper and Lower bounds
 
-To run the experiment:
+The file containing the experiment is `exp_prop_2.py`. This experiment trains a GIN network with `activation` 
+activations on a dataset of `m` samples with `m-q` of `d`-regular graphs and
+`q` 1-WL distinguishable graphs on `num-layers` where the WL distinguishability is given on `wl-iterations`. 
+
+
+Then, to estimate #\mathcal{R}_S(\mathcal{F}_A)$ we use Monte Carlo sampling and train the network `K` times
+on random assignment of Rademaher variables `\sigma` to the datapoints with a BCE loss and then average 
+over the `K` runs. To attain the $\mathrm{sup}$ in the expectation we perform `restarts` restarts to get
+different parameter initializations.
+
+The results show the theoretical bands for $\mathcal{R}_S$ along the closed-form solution.
 
 ```bash
-python run_experiment.py
-
+uv run --extra cpu exp_prop_2.py --data-seed 1000 --mc-seed 2000 --m 100 --n 12 --d 3 --q 1 --num-layers 3 --wl-iterations 3 --K 80 --epochs 30 --lr 0.05 --restarts 2 --device cpu --activation leaky_relu
 ```
-
-### A Note on TUDatasets
-
-The script automatically downloads the requested dataset into a `/data` directory upon the first execution. When you run the script, `torch_geometric.datasets.TUDataset` will check for the raw files locally. If they aren't found, it will pull them from the [TU Dortmund University](https://chrsmrrs.github.io/datasets/) servers. Ensure you have an active internet connection for the initial run. 
