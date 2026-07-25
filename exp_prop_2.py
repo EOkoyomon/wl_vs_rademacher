@@ -15,6 +15,8 @@ def parse_args():
     p.add_argument("--n", type=int, default=12, help="node count for the d-regular graphs")
     p.add_argument("--d", type=int, default=3, help="regular degree")
     p.add_argument("--q", type=int, required=True, help="number of WL graphs out of m")
+    p.add_argument("--prop", type=float, default=None,
+                    help="proportion of m per rich class (default: 1 copy per rich class, old behavior)")
     p.add_argument("--hidden-channels", type=int, default=8)
     p.add_argument("--num-layers", type=int, default=2)
     p.add_argument("--wl-iterations", type=int, default=2, help="should be >= num_layers (see Xu et al.)")
@@ -37,7 +39,7 @@ def estimate_rademacher(dataset, K: int, hidden_channels:int, num_layers:int, ac
     values = []
     eps=1e-7
     # Do K Rademacher draws
-    for _ in tqdm(range(K)):
+    for k in tqdm(range(K)):
         sigma = torch.tensor(
             [1.0 if random.random() < 0.5 else -1.0 for _ in range(m)], device=device,
         )
@@ -50,6 +52,7 @@ def estimate_rademacher(dataset, K: int, hidden_channels:int, num_layers:int, ac
                     activation=activation
             ).to(device=device)
             opt = torch.optim.Adam(model.parameters(), lr=lr)
+            best_per_k = -1e9
             for _ in range(epochs):
                 opt.zero_grad()
                 preds = model.forward_batch(dataset)
@@ -58,18 +61,26 @@ def estimate_rademacher(dataset, K: int, hidden_channels:int, num_layers:int, ac
                 # obj = (sigma * perds).mean()
                 # # We do - to get the sup
                 # (-obj).backward()
-                p = ((preds + 1.0) / 2.0).clamp(eps, 1.0 - eps)
-                loss = torch.nn.functional.binary_cross_entropy(p, y01)
+                #p = ((preds + 1.0) / 2.0).clamp(eps, 1.0 - eps)
+                preds = torch.nn.functional.sigmoid(preds)
+                #print(preds)
+                loss = torch.nn.functional.binary_cross_entropy(preds, y01)
                 loss.backward()
                 if grad_clip is not None:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 opt.step()
                 with torch.no_grad():
-                    obj = (sigma * model.forward_batch(dataset)).mean().item()
+                    y_hat = torch.nn.functional.sigmoid(model.forward_batch(dataset)) > 0.5
+                    acc = (y01.bool() == y_hat).sum().float().item() / len(dataset)
+                    obj = acc
+                    # obj = (sigma * model.forward_batch(dataset)).mean().item()
                 best = max(best, obj)
+                best_per_k = max(best_per_k, obj)
+            #print(f"k:{k} -> Acc: {best_per_k}")
+
         values.append(best) 
 
-    mc_estimate = float(np.mean(values))
+    mc_estimate = (2 * float(np.mean(values))) - 1
     return mc_estimate, values
 
 def main():
@@ -85,7 +96,7 @@ def main():
 
     device = args.device
 
-    graphs = sample_dataset_regular_mixed(m, n, d, q, data_seed)
+    graphs = sample_dataset_regular_mixed(m, n, d, q, data_seed, prop=args.prop)
     invariants = wl_colors(graphs, iterations=args.wl_iterations)
     groups = partition_by_invariant(invariants)
 
@@ -94,7 +105,6 @@ def main():
     mu_list = [mu / args.m for mu in mu_counts]
 
     lower_rad, upper_rad, exact_rad = prop2_bounds(mu_list,mu_counts, m)
-
     torch_graphs = [torch.tensor(A, dtype=torch.float32, device=args.device) for A in graphs]
 
     mc_rad, vals = estimate_rademacher(
@@ -109,7 +119,7 @@ def main():
     in_band = lower_rad <= mc_rad <= upper_rad
 
     row = dict(
-        p=p, q=q, n=n, d=d, m=m, K=args.K,
+        p=p, q=q, prop=args.prop, n=n, d=d, m=m, K=args.K,
         dataset_seed=args.data_seed, mc_seed=args.mc_seed,
         hidden_dim=args.hidden_channels, num_layers=args.num_layers, wl_iterations=args.wl_iterations,
         epochs=args.epochs, lr=args.lr, restarts=args.restarts,

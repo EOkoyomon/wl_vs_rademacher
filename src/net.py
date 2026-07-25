@@ -137,7 +137,7 @@ class GIN(torch.nn.Module):
         return self.beta(self.embedding(A)).squeeze()
 
     def forward(self, A):
-        return torch.tanh(self.logits(A))
+        return self.logits(A)
 
     def embedding_batch(self, As):
         """Same computation as embedding(), but for a whole batch of
@@ -157,6 +157,6 @@ class GIN(torch.nn.Module):
         return self.beta(self.embedding_batch(As)).squeeze(-1)
 
     def forward_batch(self, As):
-        return torch.tanh(self.logits_batch(As))
+        return self.logits_batch(As)
 
 
